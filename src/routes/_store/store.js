@@ -4,8 +4,15 @@ import { mixins } from './mixins/mixins.js'
 import { LocalStorageStore } from './LocalStorageStore.js'
 import { observe } from 'svelte-extras'
 import { isKaiOS } from '../_utils/userAgent/isKaiOS.js'
+import * as atprotoAPI from '../_api_atproto/auth.js' // ATProto auth functions
+import atprotoAgent from '../_api_atproto/agent.js' // ATProto agent
 
 const persistedState = {
+  // ATProto specific persisted state
+  atprotoSessions: {}, // Store by DID: { did, handle, email, accessJwt, refreshJwt }
+  currentAtprotoSessionDid: null, // DID of the currently active ATProto session
+  atprotoPdsUrls: {}, // Store by DID: PDS URL associated with that account
+
   alwaysShowFocusRing: false,
   autoplayGifs: !(
     !ENAFORE_IS_BROWSER || matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -83,7 +90,12 @@ const nonPersistedState = {
   verifyCredentials: {},
   statusTranslationContents: {},
   statusTranslations: {},
-  instanceDataReady: {}
+  instanceDataReady: {},
+
+  // ATProto specific non-persisted state
+  currentAtprotoAgentState: null, // Could store agent readiness or errors
+  isAtprotoSessionActive: false, // Derived, but useful to have explicitly
+  currentAccountProtocol: null, // 'activitypub' or 'atproto'
 }
 
 const state = Object.assign({}, persistedState, nonPersistedState)

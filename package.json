@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@ampproject/remapping": "^2.3.0",
+    "@atproto/api": "^0.15.16",
     "@easrng/elements": "^0.1.15",
     "@easrng/image-grid": "^0.0.5",
     "@easrng/sparkle": "^0.0.0",

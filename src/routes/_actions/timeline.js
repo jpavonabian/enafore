@@ -1,5 +1,6 @@
 import { store } from '../_store/store.js'
-import { getTimeline } from '../_api/timelines.js'
+import { getTimeline as getActivityPubTimeline } from '../_api/timelines.js'
+import { getTimeline as getAtprotoTimeline } from '../_api_atproto/timelines.js'
 import { toast } from '../_components/toast/toast.js'
 import { mark, stop } from '../_utils/marks.js'
 import { concat, mergeArrays } from '../_utils/arrays.js'
@@ -90,11 +91,38 @@ async function fetchThreadFromNetwork (instanceName, accessToken, timelineName) 
 }
 
 async function fetchTimelineItemsFromNetwork (instanceName, accessToken, timelineName, lastTimelineItemId) {
+  const { currentAccountProtocol } = store.get()
+  console.log(`[Timeline Action] fetchTimelineItemsFromNetwork for ${instanceName}, timeline: ${timelineName}, protocol: ${currentAccountProtocol}, lastItemId/cursor: ${lastTimelineItemId}`)
+
   if (timelineName.startsWith('status/')) { // special case - this is a list of descendents and ancestors
+    // TODO: ATProto thread fetching if currentAccountProtocol is 'atproto'
+    console.log(`[Timeline Action] Fetching thread for status: ${timelineName.split('/')[1]}`)
+    // For now, falls through to ActivityPub version or needs its own ATProto thread logic
     return fetchThreadFromNetwork(instanceName, accessToken, timelineName)
   } else { // normal timeline
-    const { items } = await getTimeline(instanceName, accessToken, timelineName, lastTimelineItemId, null, TIMELINE_BATCH_SIZE)
-    return items
+    if (currentAccountProtocol === 'atproto') {
+      console.log(`[Timeline Action] Fetching ATProto timeline. Enafore timeline: ${timelineName}`)
+      // For ATProto, lastTimelineItemId is the cursor.
+      // timelineName could be 'home', 'discover', or a feed URI (at://...)
+      let atprotoAlgorithm = timelineName // This needs proper mapping
+      if (timelineName === 'home') {
+        atprotoAlgorithm = undefined; // Default 'Following' feed for getAtprotoTimeline
+        console.log(`[Timeline Action] Mapped Enafore 'home' to default ATProto 'Following' feed.`)
+      }
+      // TODO: map other Enafore timelineNames (e.g., 'local', 'federated', 'notifications') to ATProto algorithms or feed URIs
+
+      const { items, headers } = await getAtprotoTimeline(atprotoAlgorithm, TIMELINE_BATCH_SIZE, lastTimelineItemId)
+      console.log(`[Timeline Action] ATProto timeline fetched. Items: ${items.length}, New Cursor: ${headers._atproto_cursor}`)
+      // Store cursor for next fetch. Enafore uses timelineNextPageId.
+      // The getAtprotoTimeline returns _atproto_cursor in headers.
+      store.setForTimeline(instanceName, timelineName, { timelineNextPageId: headers._atproto_cursor })
+      return items
+    } else {
+      console.log(`[Timeline Action] Fetching ActivityPub timeline for ${instanceName}, timeline: ${timelineName}`)
+      const { items } = await getActivityPubTimeline(instanceName, accessToken, timelineName, lastTimelineItemId, null, TIMELINE_BATCH_SIZE)
+      console.log(`[Timeline Action] ActivityPub timeline fetched. Items: ${items.length}`)
+      return items
+    }
   }
 }
 async function addPagedTimelineItems (instanceName, timelineName, items) {
@@ -125,16 +153,46 @@ export async function addPagedTimelineItemSummaries (instanceName, timelineName,
 }
 
 async function fetchPagedItems (instanceName, accessToken, timelineName) {
-  const { timelineNextPageId } = store.get()
-  console.log('saved timelineNextPageId', timelineNextPageId)
-  const { items, headers } = await getTimeline(instanceName, accessToken, timelineName, timelineNextPageId, null, TIMELINE_BATCH_SIZE)
-  const linkHeader = headers.get('Link')
-  const parsedLinkHeader = li.parse(linkHeader)
-  const nextUrl = parsedLinkHeader && parsedLinkHeader.next
-  const nextId = nextUrl && (new URL(nextUrl)).searchParams.get('max_id')
-  console.log('new timelineNextPageId', nextId)
-  store.setForTimeline(instanceName, timelineName, { timelineNextPageId: nextId })
-  await storeFreshTimelineItemsInDatabase(instanceName, timelineName, items)
+  const { timelineNextPageId } = store.get() // This is used as 'max_id' for AP or 'cursor' for ATProto
+  const { currentAccountProtocol } = store.get()
+  console.log(`[Timeline Action] fetchPagedItems for ${instanceName}, timeline: ${timelineName}, protocol: ${currentAccountProtocol}, current next page ID/cursor: ${timelineNextPageId}`)
+
+  let items
+  let newNextPageId
+
+  if (currentAccountProtocol === 'atproto') {
+    console.log(`[Timeline Action] Paging ATProto timeline: ${timelineName}`)
+    // TODO: Map Enafore timelineName to ATProto algorithm/feed URI for paged fetch
+    let atprotoAlgorithm = timelineName
+    if (timelineName === 'home') {
+        atprotoAlgorithm = undefined;
+        console.log(`[Timeline Action] Mapped Enafore 'home' to default ATProto 'Following' feed for paging.`)
+    }
+    // TODO: map other Enafore timelineNames
+
+    const { items: atpItems, headers: atpHeaders } = await getAtprotoTimeline(atprotoAlgorithm, TIMELINE_BATCH_SIZE, timelineNextPageId)
+    items = atpItems
+    newNextPageId = atpHeaders._atproto_cursor // Use the returned cursor
+    console.log(`[Timeline Action] ATProto paged fetch. Items: ${items.length}, New Cursor: ${newNextPageId}`)
+    // Note: atproto_cursor might be undefined if no more items
+  } else {
+    console.log(`[Timeline Action] Paging ActivityPub timeline for ${instanceName}, timeline: ${timelineName}`)
+    const { items: apItems, headers: apHeaders } = await getActivityPubTimeline(instanceName, accessToken, timelineName, timelineNextPageId, null, TIMELINE_BATCH_SIZE)
+    items = apItems
+    const linkHeader = apHeaders.get('Link')
+    const parsedLinkHeader = li.parse(linkHeader)
+    const nextUrl = parsedLinkHeader && parsedLinkHeader.next
+    newNextPageId = nextUrl && (new URL(nextUrl)).searchParams.get('max_id')
+    console.log(`[Timeline Action] ActivityPub paged fetch. Items: ${items.length}, Next Max ID: ${newNextPageId}`)
+  }
+
+  console.log('[Timeline Action] Updating timelineNextPageId in store to:', newNextPageId)
+  store.setForTimeline(instanceName, timelineName, { timelineNextPageId: newNextPageId })
+
+  console.log('[Timeline Action] Storing fresh paged items in database...')
+  await storeFreshTimelineItemsInDatabase(instanceName, timelineName, items) // This DB might need protocol awareness
+
+  console.log('[Timeline Action] Adding paged items to store summaries...')
   await addPagedTimelineItems(instanceName, timelineName, items)
 }
 

@@ -1,4 +1,5 @@
 import { getAccessTokenFromAuthCode, registerApplication, generateAuthLink } from '../_api/oauth.js'
+import * as atprotoAPI from '../_api_atproto/auth.js' // ATProto auth functions
 import { getInstanceInfo } from '../_api/instance.js'
 import { goto } from '../../../__sapper__/client.js'
 import { DEFAULT_THEME, switchToTheme } from '../_utils/themeEngine.js'
@@ -64,13 +65,44 @@ export async function logInToInstance () {
     logInToInstanceLoading: true,
     logInToInstanceError: null
   })
+
+  // Get instanceName and type from store. instanceNameInSearch might be handle or PDS URL for atproto.
+  const { instanceNameInSearch, instanceTypeToAdd = 'activitypub', atprotoPassword, atprotoPdsUrl } = store.get()
+  // atprotoPassword and atprotoPdsUrl would need to be new fields in the store, set by the UI form
+  console.log(`[Add Instance] Initiating login. Type: ${instanceTypeToAdd}, Identifier: ${instanceNameInSearch}, PDS: ${atprotoPdsUrl || 'default'}`)
+
   try {
-    await redirectToOauth()
+    if (instanceTypeToAdd === 'atproto') {
+      console.log('[Add Instance] Starting ATProto login flow.')
+      // instanceNameInSearch is the handle (e.g., username.bsky.social)
+      // atprotoPdsUrl is the PDS server (e.g., https://bsky.social) - can be optional if default
+      // atprotoPassword is the app password
+      if (!atprotoPassword) {
+        console.error('[Add Instance] ATProto password missing.')
+        throw createKnownError('Password is required for ATProto login.')
+      }
+      // Use store's atprotoLogin action, which handles agent and store updates
+      await store.atprotoLogin(instanceNameInSearch, atprotoPassword, atprotoPdsUrl)
+      console.log('[Add Instance] ATProto login successful via store action.')
+      // Success: update UI, clear form, navigate
+      store.set({
+        instanceNameInSearch: '',
+        atprotoPassword: '', // Clear password from store state
+        atprotoPdsUrl: '',
+      })
+      // currentInstance and currentAccountProtocol are set by the store mixin
+      store.save()
+      goto('/')
+    } else { // Existing ActivityPub OAuth flow
+      console.log('[Add Instance] Starting ActivityPub OAuth flow.')
+      await redirectToOauth()
+    }
   } catch (err) {
-    console.error(err)
+    console.error(`[Add Instance] Login failed for ${instanceNameInSearch} (Type: ${instanceTypeToAdd}):`, err)
     const error = `${(err.message || err.name).replace(/\.$/, '')}. ` +
       (err.knownError ? '' : (navigator.onLine ? GENERIC_ERROR : 'Are you offline?'))
-    const { instanceNameInSearch } = store.get()
+    // Re-fetch instanceNameInSearch in case it was cleared by a failed store.atprotoLogin attempt
+    const currentInstanceNameInSearch = store.get().instanceNameInSearch || instanceNameInSearch
     store.set({
       logInToInstanceError: error,
       logInToInstanceErrorForText: instanceNameInSearch
@@ -103,7 +135,8 @@ async function registerNewInstance (code) {
     loggedInInstances,
     currentInstance: currentRegisteredInstanceName,
     loggedInInstancesInOrder,
-    instanceThemes
+    instanceThemes,
+    currentAccountProtocol: 'activitypub' // Set protocol for ActivityPub
   })
   store.save()
   const { enableGrayscale } = store.get()
