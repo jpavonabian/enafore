@@ -1,5 +1,6 @@
 import agent from './agent.js'
 import { transformAtprotoPostToEnaforeStatus } from './timelines.js' // For embedded posts
+import { transformProfileViewBasicToEnaforeAccount } from './posts.js' // For actor transformation
 
 /**
  * Transforms an raw ATProto notification object (from `agent.listNotifications()`)
@@ -29,18 +30,9 @@ export function transformAtprotoNotification (atpNotification) {
 
   // Actor who performed the action
   if (atpNotification.author) {
-    enoNotification.account = {
-      id: atpNotification.author.did,
-      did: atpNotification.author.did,
-      handle: atpNotification.author.handle,
-      displayName: atpNotification.author.displayName || atpNotification.author.handle,
-      avatar: atpNotification.author.avatar || null,
-      acct: atpNotification.author.handle, // Enafore style
-      username: atpNotification.author.handle,
-      protocol: 'atproto',
-      // Add other fields Enafore UI might expect for an account
-      url: `https://bsky.app/profile/${atpNotification.author.did}`,
-    }
+    // Use the shared transformer. The PDS hostname might not be known here directly,
+    // so transformProfileViewBasicToEnaforeAccount will use its fallback for acct.
+    enoNotification.account = transformProfileViewBasicToEnaforeAccount(atpNotification.author, null);
   }
 
   // If the notification is about a post (like, reply, mention, quote, repost of your post)
