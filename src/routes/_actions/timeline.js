@@ -134,14 +134,31 @@ async function fetchTimelineItemsFromNetwork (instanceName, accessToken, timelin
       console.log(`[Timeline Action] Fetching ATProto timeline. Enafore timeline: ${timelineName}`)
       // For ATProto, lastTimelineItemId is the cursor.
       // timelineName could be 'home', 'discover', or a feed URI (at://...)
-      let atprotoAlgorithm = timelineName // This needs proper mapping
-      if (timelineName === 'home') {
-        atprotoAlgorithm = undefined; // Default 'Following' feed for getAtprotoTimeline
-        console.log(`[Timeline Action] Mapped Enafore 'home' to default ATProto 'Following' feed.`)
-      }
-      // TODO: map other Enafore timelineNames (e.g., 'local', 'federated', 'notifications') to ATProto algorithms or feed URIs
 
-      const { items, headers } = await getAtprotoTimeline(atprotoAlgorithm, TIMELINE_BATCH_SIZE, lastTimelineItemId)
+      const atprotoFeedMap = {
+        'home': undefined, // Handled by getAtprotoTimeline as default "Following" feed
+        'federated': 'at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/whats-hot', // Bluesky "Discover"
+        // 'notifications': specific_notifications_handler, // Placeholder for future
+      };
+
+      let atprotoAlgorithmOrActor;
+
+      if (timelineName.startsWith('account/')) {
+        const accountId = timelineName.substring('account/'.length).split('/')[0]; // Extracts DID or handle
+        atprotoAlgorithmOrActor = accountId; // Pass DID/handle to getAuthorFeed
+        console.log(`[Timeline Action] Mapped Enafore 'account/${accountId}' to ATProto actor feed: ${atprotoAlgorithmOrActor}`);
+      } else if (atprotoFeedMap.hasOwnProperty(timelineName)) {
+        atprotoAlgorithmOrActor = atprotoFeedMap[timelineName];
+        console.log(`[Timeline Action] Mapped Enafore timeline '${timelineName}' to ATProto algorithm/feed: ${atprotoAlgorithmOrActor}`);
+      } else if (timelineName.startsWith('at://')) { // Already a feed URI
+        atprotoAlgorithmOrActor = timelineName;
+        console.log(`[Timeline Action] Using direct ATProto feed URI: ${atprotoAlgorithmOrActor}`);
+      } else {
+        console.warn(`[Timeline Action] Unmapped Enafore timeline '${timelineName}' for ATProto. Falling back to 'home' (Following).`);
+        atprotoAlgorithmOrActor = undefined; // Fallback to home/following
+      }
+
+      const { items, headers } = await getAtprotoTimeline(atprotoAlgorithmOrActor, TIMELINE_BATCH_SIZE, lastTimelineItemId)
       console.log(`[Timeline Action] ATProto timeline fetched. Items: ${items.length}, New Cursor: ${headers._atproto_cursor}`)
       // Store cursor for next fetch. Enafore uses timelineNextPageId.
       // The getAtprotoTimeline returns _atproto_cursor in headers.
@@ -192,15 +209,29 @@ async function fetchPagedItems (instanceName, accessToken, timelineName) {
 
   if (currentAccountProtocol === 'atproto') {
     console.log(`[Timeline Action] Paging ATProto timeline: ${timelineName}`)
-    // TODO: Map Enafore timelineName to ATProto algorithm/feed URI for paged fetch
-    let atprotoAlgorithm = timelineName
-    if (timelineName === 'home') {
-        atprotoAlgorithm = undefined;
-        console.log(`[Timeline Action] Mapped Enafore 'home' to default ATProto 'Following' feed for paging.`)
-    }
-    // TODO: map other Enafore timelineNames
 
-    const { items: atpItems, headers: atpHeaders } = await getAtprotoTimeline(atprotoAlgorithm, TIMELINE_BATCH_SIZE, timelineNextPageId)
+    const atprotoFeedMap = {
+      'home': undefined,
+      'federated': 'at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/whats-hot',
+    };
+    let atprotoAlgorithmOrActor;
+
+    if (timelineName.startsWith('account/')) {
+      const accountId = timelineName.substring('account/'.length).split('/')[0];
+      atprotoAlgorithmOrActor = accountId;
+      console.log(`[Timeline Action] Paging ATProto actor feed: ${atprotoAlgorithmOrActor}`);
+    } else if (atprotoFeedMap.hasOwnProperty(timelineName)) {
+      atprotoAlgorithmOrActor = atprotoFeedMap[timelineName];
+      console.log(`[Timeline Action] Paging mapped Enafore timeline '${timelineName}' to ATProto algorithm/feed: ${atprotoAlgorithmOrActor}`);
+    } else if (timelineName.startsWith('at://')) {
+      atprotoAlgorithmOrActor = timelineName;
+      console.log(`[Timeline Action] Paging direct ATProto feed URI: ${atprotoAlgorithmOrActor}`);
+    } else {
+      console.warn(`[Timeline Action] Paging unmapped Enafore timeline '${timelineName}' for ATProto. Falling back to 'home' (Following).`);
+      atprotoAlgorithmOrActor = undefined;
+    }
+
+    const { items: atpItems, headers: atpHeaders } = await getAtprotoTimeline(atprotoAlgorithmOrActor, TIMELINE_BATCH_SIZE, timelineNextPageId)
     items = atpItems
     newNextPageId = atpHeaders._atproto_cursor // Use the returned cursor
     console.log(`[Timeline Action] ATProto paged fetch. Items: ${items.length}, New Cursor: ${newNextPageId}`)

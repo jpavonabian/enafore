@@ -254,19 +254,34 @@ export async function getTimeline (algorithm, limit, cursor) {
     }
 
     let response;
-    if (params.feed && params.feed.startsWith('at://')) { // This is a custom feed URI
-        console.log(`[ATProto Timeline] Calling agent.app.bsky.feed.getFeed with params:`, params)
-        response = await agent.app.bsky.feed.getFeed(params)
+    // Check if 'algorithm' is an actor DID or handle for getAuthorFeed
+    // A simple heuristic: if it contains 'did:plc:' or often has more than one dot (e.g., handle.bsky.social)
+    // and is not an at:// URI. This needs to be robust.
+    // A better way would be for the caller in timeline.js to specify the type of feed.
+    // For now, let's assume if 'algorithm' is passed and not an at:// URI, it might be an actor.
+    // This will be refined when timeline.js calls this.
+
+    const isActorFeedRequest = params.feed && (params.feed.startsWith('did:') || params.feed.includes('.')); // Simple check
+    const isCustomFeedUri = params.feed && params.feed.startsWith('at://');
+
+    if (isCustomFeedUri) {
+        console.log(`[ATProto Timeline] Calling agent.app.bsky.feed.getFeed for ${params.feed} with params:`, params)
+        response = await agent.app.bsky.feed.getFeed(params) // params include { feed, limit, cursor }
+    } else if (isActorFeedRequest) {
+        // 'params.feed' here is actually the actor identifier
+        const actor = params.feed;
+        console.log(`[ATProto Timeline] Calling agent.getAuthorFeed for actor: ${actor} with params:`, { limit: params.limit, cursor: params.cursor })
+        response = await agent.getAuthorFeed({ actor, limit: params.limit, cursor: params.cursor })
     } else { // Default "Following" timeline or other named algorithms if supported by getTimeline directly
+        let algoParam = params.feed; // if 'algorithm' was passed in params.feed
         if (params.feed) {
-          params.algorithm = params.feed; // agent.getTimeline uses 'algorithm' query param
-          console.log(`[ATProto Timeline] Using algorithm '${params.algorithm}' for agent.getTimeline.`)
+          console.log(`[ATProto Timeline] Using algorithm '${algoParam}' for agent.getTimeline.`)
         } else {
           console.log(`[ATProto Timeline] Using default 'Following' feed for agent.getTimeline.`)
         }
-        delete params.feed;
-        console.log(`[ATProto Timeline] Calling agent.getTimeline with params:`, params)
-        response = await agent.getTimeline(params)
+        // agent.getTimeline expects 'algorithm' in its direct params, not in a 'feed' property.
+        console.log(`[ATProto Timeline] Calling agent.getTimeline with params:`, { algorithm: algoParam, limit: params.limit, cursor: params.cursor })
+        response = await agent.getTimeline({ algorithm: algoParam, limit: params.limit, cursor: params.cursor })
     }
 
     console.log(`[ATProto Timeline] Received ${response.data.feed.length} items. New cursor: ${response.data.cursor}`)
@@ -284,11 +299,28 @@ export async function getTimeline (algorithm, limit, cursor) {
     return { items, headers }
 
   } catch (error) {
-    console.error(`[ATProto Timeline] Failed to fetch timeline (Algorithm: ${algorithm}, Cursor: ${cursor}):`, error)
-    if (error.name === 'XRPCError' && (error.status === 401 || error.message.includes('Authentication Required') || error.message.includes('ExpiredToken'))) {
-      console.warn('[ATProto Timeline] Session expired or invalid.')
-      throw new Error('Session expired or invalid. Please login again.')
+    console.error(`[ATProto Timeline] Failed to fetch timeline (Algorithm/Actor: ${algorithm}, Cursor: ${cursor}):`, error.name, error.message, error)
+    let message = `Failed to fetch timeline: ${error.message || 'Unknown error'}`
+    if (error.name === 'XRPCError') {
+      if (error.status === 401 || error.error === 'AuthenticationRequired' || error.error === 'ExpiredToken') {
+        message = 'Your session has expired. Please log in again.'
+      } else if (error.status === 400 && error.error === 'InvalidRequest') {
+        message = 'There was an issue with the request for this feed.'
+         if (error.message && error.message.toLowerCase().includes('feed not found') || error.message.toLowerCase().includes('could not resolve feed')) {
+            message = `Feed not found or could not be resolved: ${algorithm || 'default'}.`
+        } else if (error.message && error.message.toLowerCase().includes('actor not found')) {
+            message = `User profile not found: ${algorithm}.`
+        }
+      } else if (error.status === 404) {
+         message = `Feed or user not found: ${algorithm || 'default'}.`
+      } else if (error.status >= 500) {
+        message = 'The server encountered an error trying to fetch this feed. Please try again later.'
+      } else {
+        message = `Timeline error: ${error.message || 'Unknown server error'}. (Status: ${error.status})`
+      }
+    } else if (error.message.includes('NetworkError') || error.message.includes('fetch failed')) {
+        message = 'Network error. Could not connect to the server to fetch timeline.'
     }
-    throw error
+    throw new Error(message)
   }
 }

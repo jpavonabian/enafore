@@ -183,24 +183,60 @@ export function atprotoMixins (Store) {
     return did ? sessions[did] : sessions[this.get().currentAtprotoSessionDid]
   }
 
-  Store.prototype.getCurrentAtprotoUser = function () {
+  Store.prototype.getCurrentAtprotoUser = async function () { // Made async
     const did = this.get().currentAtprotoSessionDid
-    if (!did) return null
-    const session = this.get().atprotoSessions[did]
-    if (!session) return null
-    // Return a structure similar to Enafore's existing user/account objects for consistency
-    return {
-      id: session.did, // Or a more Enafore-like ID if necessary
-      did: session.did,
-      username: session.handle,
-      handle: session.handle,
-      displayName: session.displayName || session.handle, // Fallback display name
-      avatar: session.avatar || null, // User's avatar URL
-      email: session.email, // If available
-      pds: getAgentPdsUrl(), // PDS URL
-      protocol: 'atproto',
-      // Add other fields Enafore UI might expect, with defaults
-      // acct: `${session.handle}@${new URL(getAgentPdsUrl()).hostname}`, // Example full acct
+    if (!did) {
+      console.log('[Store Mixin] getCurrentAtprotoUser: No current DID.')
+      return null
     }
+
+    const session = this.get().atprotoSessions[did]
+    if (!session) {
+      console.log(`[Store Mixin] getCurrentAtprotoUser: No session found in store for DID ${did}.`)
+      return null
+    }
+
+    // Session object from atprotoLoginApi contains: did, handle, email, accessJwt, refreshJwt
+    // It does *not* contain full profile details like displayName, avatar from getProfile.
+    // We need to fetch the profile from the database.
+
+    const pdsHostname = new URL(getAgentPdsUrl() || this.get().atprotoPdsUrls[did] || 'https://bsky.social').hostname
+    let userProfile = await getAtprotoAccount(pdsHostname, did)
+
+    if (!userProfile) {
+      console.warn(`[Store Mixin] getCurrentAtprotoUser: Profile for DID ${did} not found in DB. May need to fetch from network if agent is active.`)
+      // Optionally, try to fetch from network if agent is available and has session, then store it.
+      // This might be better handled during login/resumeSession to ensure DB is populated.
+      // For now, we'll return based on what's in session and DB.
+      // If profile is critical here, this function could trigger a network fetch.
+    }
+
+    // Construct the user object for UI, prioritizing DB profile data, fallback to session data.
+    const displayName = userProfile?.displayName || session.handle;
+    const avatar = userProfile?.avatar || null; // Prefer profile avatar
+    const userForUI = {
+      id: session.did,
+      did: session.did,
+      username: session.handle, // From session (guaranteed)
+      handle: session.handle,   // From session
+      displayName: displayName,
+      avatar: avatar,
+      // From profile if available
+      description: userProfile?.description || '',
+      followersCount: userProfile?.followersCount || 0,
+      followsCount: userProfile?.followsCount || 0,
+      postsCount: userProfile?.postsCount || 0,
+      banner: userProfile?.banner || null,
+      // General fields
+      url: `https://bsky.app/profile/${session.did}`, // Example web URL
+      pds: getAgentPdsUrl(),
+      protocol: 'atproto',
+      acct: `${session.handle}@${pdsHostname}`, // Enafore-style full account string
+      // Raw data for debugging or more detailed views
+      _session: session,
+      _profile: userProfile || null
+    }
+    console.log(`[Store Mixin] getCurrentAtprotoUser returning for DID ${did}:`, userProfile)
+    return userForUI
   }
 }

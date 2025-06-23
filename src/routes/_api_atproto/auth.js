@@ -23,67 +23,65 @@ export async function login (identifier, password, pdsUrl) {
     const response = await agent.login({ identifier, password })
     // The `persistSession` callback in agent.js handles storing the session.
     console.log(`[ATProto Auth] Login successful for ${response.data.handle} (DID: ${response.data.did})`)
-    return response.data // { accessJwt, refreshJwt, handle, did, email, didDoc, active, status }
+    return response.data
   } catch (error) {
-    console.error(`[ATProto Auth] Login failed for ${identifier}:`, error.message, error)
-    // Clear any potentially partially stored session info if login fails hard
-    if (typeof localStorage !== 'undefined') {
-        // localStorage.removeItem('atproto_session'); // persistSession in agent should handle 'clear' on error
+    console.error(`[ATProto Auth] Login failed for ${identifier}:`, error.name, error.message, error)
+    let message = 'Login failed. Please check your handle and password.'
+    if (error.name === 'XRPCError') {
+      // XRPCError has status and error (code string)
+      if (error.status === 401 || error.status === 400 && error.error === 'InvalidRequest') { // InvalidRequest can be bad handle/pass
+        message = 'Invalid handle or password. Please try again.'
+      } else if (error.status === 500) {
+        message = 'The server encountered an error. Please try again later.'
+      } else {
+        message = `Login error: ${error.message || 'Unknown server error'}. (Status: ${error.status})`
+      }
+    } else if (error.message.includes('NetworkError') || error.message.includes('fetch failed')) {
+        message = 'Network error. Could not connect to the server. Please check your internet connection and PDS URL.'
     }
-    throw error
+    throw new Error(message) // Re-throw with a potentially more user-friendly message
   }
 }
 
 export async function resumeAppSession () {
-  // This function is called on app startup to try and resume
-  // It relies on the agent's constructor using persistSession correctly
-  // and ensureSession can be an additional check or trigger.
   console.log('[ATProto Auth] Attempting to resume app session...')
-  await ensureSession() // ensureSession now mostly checks and logs
-  if (agent.hasSession) {
-    console.log(`[ATProto Auth] Session successfully resumed for DID: ${agent.session.did}`)
-    return agent.session
+  try {
+    await ensureSession()
+    if (agent.hasSession) {
+      console.log(`[ATProto Auth] Session successfully resumed for DID: ${agent.session.did}`)
+      return agent.session
+    }
+    console.log('[ATProto Auth] No active session to resume.')
+    return null
+  } catch (error) {
+    // Errors during ensureSession might be from an attempted refresh token usage that failed.
+    console.warn('[ATProto Auth] Error during session resumption attempt:', error.name, error.message)
+    // Don't necessarily throw here, as failing to resume isn't a critical app error,
+    // just means user needs to log in.
+    return null;
   }
-  console.log('[ATProto Auth] No active session to resume.')
-  return null
 }
 
 export async function logout () {
   console.log('[ATProto Auth] Attempting logout...')
   try {
-    // BskyAgent does not have an explicit server-side logout method
-    // as sessions are primarily JWT based and managed client-side for expiration.
-    // Clearing the session locally is the main action.
-    // The `persistSession` callback with 'clear' event handles removing from localStorage.
-    agent.session = undefined; // Manually trigger the 'clear' if no direct logout method that does it.
-                               // Or rely on a method that clears and triggers persistSession 'clear'.
-                               // As of recent versions, setting agent.session = undefined
-                               // might not trigger persistSession. A more direct clear might be needed if available,
-                               // or manually clearing localStorage and agent state.
+    // No server-side action for agent.logout() as of current SDK, session is client-managed.
+    // Clearing agent's session object and persisted data is key.
+    agent.session = undefined;
     console.log('[ATProto Auth] Agent session property cleared.')
 
-    // Forcing the persistSession 'clear' by directly manipulating what it checks:
     if (typeof localStorage !== 'undefined') {
-        localStorage.removeItem('atproto_session');
-        console.log('[ATProto Auth] Cleared atproto_session from localStorage.')
-        // also clear PDS URL on logout? Or keep it for next login? User choice.
-        // localStorage.removeItem('atproto_pds_url');
+        localStorage.removeItem('atproto_session'); // persistSession callback should handle this
+        console.log('[ATProto Auth] Cleared atproto_session from localStorage (manual).')
     }
-    // Reset agent's internal session state if not already cleared by persistSession
-    // This depends on BskyAgent's internal implementation details.
-    // A robust way is to re-initialize the agent or ensure its session object is null/undefined.
-    // For now, we assume agent.session = undefined is enough to signal no session.
-    // agent.session = null; // Or some other method to clear it.
-
     console.log('[ATProto Auth] Logout successful, session cleared locally.')
-  } catch (error) {
-    console.error('[ATProto Auth] Error during logout:', error)
-    // Still clear locally even if a server call (if any existed) failed
+  } catch (error) { // Should generally not error if just clearing local state
+    console.error('[ATProto Auth] Error during local logout:', error.name, error.message)
+    // Still ensure local state is cleared as much as possible
     if (typeof localStorage !== 'undefined') {
         localStorage.removeItem('atproto_session');
-        console.log('[ATProto Auth] Ensured atproto_session cleared from localStorage after error.')
     }
-    // agent.session = undefined;
+    // No need to re-throw for local logout error usually.
   }
 }
 
