@@ -18,6 +18,8 @@ import { rehydrateStatusOrNotification } from './rehydrateStatusOrNotification.j
 import li from 'li'
 import { setMultipleAtprotoPosts } from '../_database/atprotoPosts.js'
 import { setAtprotoFeedTimeline } from '../_database/atprotoFeeds.js'
+import * as atprotoPostsApi from '../_api_atproto/posts.js' // For getNetworkPostThread
+import atprotoAgent from '../_api_atproto/agent.js'     // For PDS hostname
 
 // Define atprotoFeedMap at module scope for consistency
 const ATPROTO_FEED_MAP = {
@@ -127,14 +129,35 @@ async function fetchThreadFromNetwork (instanceName, accessToken, timelineName) 
 }
 
 async function fetchTimelineItemsFromNetwork (instanceName, accessToken, timelineName, lastTimelineItemId) {
-  const { currentAccountProtocol } = store.get()
+  const { currentAccountProtocol, currentAtprotoSessionDid } = store.get() // Added currentAtprotoSessionDid
   console.log(`[Timeline Action] fetchTimelineItemsFromNetwork for ${instanceName}, timeline: ${timelineName}, protocol: ${currentAccountProtocol}, lastItemId/cursor: ${lastTimelineItemId}`)
 
   if (timelineName.startsWith('status/')) { // special case - this is a list of descendents and ancestors
-    // TODO: ATProto thread fetching if currentAccountProtocol is 'atproto'
-    console.log(`[Timeline Action] Fetching thread for status: ${timelineName.split('/')[1]}`)
-    // For now, falls through to ActivityPub version or needs its own ATProto thread logic
-    return fetchThreadFromNetwork(instanceName, accessToken, timelineName)
+    const statusUriOrId = timelineName.substring('status/'.length)
+    console.log(`[Timeline Action] Fetching thread for status: ${statusUriOrId}`)
+    if (currentAccountProtocol === 'atproto') {
+      // Call the new ATProto network thread fetcher
+      // Note: accessToken is not used by atproto API calls with BskyAgent
+      // The transformation of this raw thread is still a TODO for the UI/consumer of this data.
+      // Also, instanceName for ATProto is the PDS hostname.
+      // The raw thread from getNetworkPostThread needs to be transformed into an array of Enafore status objects.
+      // This is a complex step deferred for later. For now, it might return the raw structure.
+      // Or, we can use the DB version: database.getAtprotoThread(pdsHostname, statusUriOrId)
+      // For consistency with AP fetching from network, let's use the network version.
+      // The result of getNetworkPostThread is a single PostView (the root of the thread with parents/replies nested).
+      // This needs to be flattened and transformed.
+      console.log(`[Timeline Action] Calling ATProto getNetworkPostThread for URI: ${statusUriOrId}`)
+      // const rawThread = await atprotoPostsApi.getNetworkPostThread(statusUriOrId);
+      // TODO: Transform rawThread (nested PostView) into an array of Enafore status objects.
+      // For now, returning an empty array to signify work needed, or UI will break.
+      // Or, fetch from DB:
+      const pdsHostname = new URL(store.get().atprotoPdsUrls[currentAtprotoSessionDid] || atprotoAgent.service.toString()).hostname;
+      const items = await database.getAtprotoThread(pdsHostname, statusUriOrId);
+      console.log(`[Timeline Action] Fetched ATProto thread from DB for ${statusUriOrId}, items: ${items.length}`);
+      return items; // Returns already transformed items from DB
+    } else {
+      return fetchThreadFromNetwork(instanceName, accessToken, timelineName) // Existing AP logic
+    }
   } else { // normal timeline
     if (currentAccountProtocol === 'atproto') {
       console.log(`[Timeline Action] Fetching ATProto timeline. Enafore timeline: ${timelineName}`)

@@ -152,7 +152,7 @@ export async function getAtprotoPostsByAuthor (pdsHostname, authorDid, limit = 2
 }
 
 
-// TODO: Add functions for fetching posts for threads (by replyParentUri or replyRootUri)
+// Functions for fetching replies and threads (getAtprotoReplies, getAtprotoThread) are now implemented.
 
 /**
  * Deletes an atproto post from the database and its references in timelines.
@@ -226,8 +226,8 @@ export async function deleteAtprotoPost (pdsHostname, postUri) {
     // Don't necessarily throw here if main post deletion succeeded, but log it.
   })
 
-  // TODO: Also remove from ATPROTO_FEED_CURSORS_STORE if this post was a cursor? Unlikely. -> This can be removed.
-  // TODO: Consider if other stores reference this post URI and need cleanup. (Largely handled by design, specific cases if any would be new features)
+  // Note: Cleanup of post URI from other stores (e.g., if it were part of a list, or quoted in another saved post's snapshot)
+  // is not handled here. This function focuses on the post itself and its primary timeline appearances.
 }
 
 /**

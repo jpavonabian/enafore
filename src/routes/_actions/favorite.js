@@ -77,10 +77,8 @@ export async function setFavorited (statusId, favorited) {
     if (currentAccountProtocol !== 'atproto') {
         await database.setStatusFavorited(currentInstance, statusId, favorited)
     } else {
-        // TODO: Persist the like state for atproto post in DB if needed beyond store's optimistic update
-        // e.g., update a `is_liked_by_me` flag and `my_like_uri` on the stored ATProto post.
-        // This would require a function like `database.setAtprotoPostLikedState(pdsHostname, postUri, liked, likeUri)`
-        console.log(`[Action favorite] ATProto like/unlike for ${statusId.uri} successful. DB update for like state pending.`)
+         // DB update for like state is now handled by store.setPostLikeUri -> getAtprotoPost/setAtprotoPost
+         console.log(`[Action favorite] ATProto like/unlike for ${statusId.uri} successful. DB persistence handled by store mixin.`)
     }
 
   } catch (e) {

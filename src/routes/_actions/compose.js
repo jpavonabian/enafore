@@ -198,10 +198,12 @@ export async function postStatus (realm, text, inReplyToId, mediaIds, // mediaId
           application: { name: 'Enafore (atproto)' }, // Placeholder
 
           // Reply specific (if applicable)
-          in_reply_to_id: atpPostDetails.replyToUri || null,
-          in_reply_to_account_id: null, // Would need to fetch parent post's author DID
-          replyParentUri: atpPostDetails.replyToUri || null,
-          replyRootUri: atpPostDetails.replyRootUri || (atpPostDetails.replyToUri ? atpPostDetails.replyToUri : null), // If only parent, parent is root
+          in_reply_to_id: atpPostDetails.reply?.parent.uri || null,
+          // in_reply_to_account_id: still needs parent post's author DID, not easily available for optimistic.
+          // UI might get this from the parent post object it's replying to.
+          in_reply_to_account_id: (inReplyToId && typeof inReplyToId === 'object') ? inReplyToId.parentAuthorDid : null,
+          replyParentUri: atpPostDetails.reply?.parent.uri || null,
+          replyRootUri: atpPostDetails.reply?.root.uri || null,
 
           // ATProto specific viewer state for new post by current user
           viewer: {

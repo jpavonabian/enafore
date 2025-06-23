@@ -55,9 +55,8 @@ export async function setAtprotoNotifications (pdsHostname, notifications, nextC
     throw error
   })
 
-  // TODO: Store `nextCursor` for the notifications feed. This would likely go into ATPROTO_FEED_CURSORS_STORE.
-  // For now, cursor management is outside this specific function, but it's related.
-  // Example: await setAtprotoFeedCursor(pdsHostname, MAIN_NOTIFICATIONS_FEED_ID, nextCursor); (from atprotoFeeds.js)
+  // Cursor management for the notifications feed is handled by the calling store mixin,
+  // which uses `database.setAtprotoFeedCursor` with a stable feed identifier like 'notifications_all'.
 
   console.log(`[DB atprotoNotifications] Batch saved ${notifications.length} notifications and their timeline entries to ${pdsHostname}`)
 }
@@ -132,9 +131,8 @@ export async function getAtprotoNotification (pdsHostname, notificationUri) {
 }
 
 // TODO:
-// - Function to fetch multiple notifications by URIs (useful after getting URIs from timeline).
-// - Cursor storage for notification feed (likely in ATPROTO_FEED_CURSORS_STORE).
-// - Deletion logic if needed.
+// - Function to fetch multiple notifications by URIs (useful after getting URIs from timeline). (Future enhancement)
+// - Deletion logic if needed. (Future enhancement)
 // - Potentially separate timeline stores for different notification types (e.g., mentions).
-//   Currently, MAIN_NOTIFICATIONS_FEED_ID is generic.
-// - Cache integration.
+//   Currently, MAIN_NOTIFICATIONS_FEED_ID is generic. (Future enhancement)
+// - Cache integration. (Future enhancement)

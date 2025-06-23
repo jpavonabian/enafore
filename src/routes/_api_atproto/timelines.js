@@ -49,10 +49,12 @@ function transformAtprotoPostToEnaforeStatus (feedViewPost) {
     // Enafore's boolean flags based on viewer state
     favorited: !!post.viewer?.like,
     reblogged: !!post.viewer?.repost,
-    // TODO: bookmarked (client-side), muted (viewer.muted on actor/thread) - if viewer state includes these in future ATProto versions
-    client_isBookmarked: false, // Default client-side bookmark state
-    mutedConversation: false, // No direct equivalent on post, would be thread mute state
-    pinned: false, // No direct equivalent for profile pins on post itself
+    // client_isBookmarked is a UI/store-level concern, derived from ATPROTO_BOOKMARKS_STORE, not set here.
+    // muted: !!post.viewer?.muted, // Raw muted state of the author by current user.
+                                 // Enafore's `mutedConversation` is for threads.
+                                 // Actor mutes are handled at profile level or by filtering.
+    mutedConversation: false,
+    pinned: false,
 
     // Fields for DB indexes and threading
     replyParentUri: null,

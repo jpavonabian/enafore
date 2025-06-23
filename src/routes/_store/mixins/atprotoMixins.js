@@ -52,11 +52,10 @@ export function atprotoMixins (Store) {
         isLoading: false,
         error: null,
         currentAccountProtocol: 'atproto',
-        // Clear ActivityPub active state
-        currentInstance: null,
-        currentRegisteredInstanceName: null,
-        // Any other AP specific active timeline data might also need clearing here
-        // e.g., if there are AP specific notification arrays in the root of the store:
+        currentInstance: new URL(getAgentPdsUrl()).hostname, // Set currentInstance to PDS hostname
+        // Clear other ActivityPub active state if they were distinct
+        currentRegisteredInstanceName: null, // This was for AP OAuth flow state
+        // accessToken: null, // Assuming accessToken is AP specific and not in global store root here
         // apNotificationItems: [],
         // apUnreadNotificationCount: 0,
         // For now, focusing on core instance/session identifiers.
@@ -105,6 +104,7 @@ export function atprotoMixins (Store) {
         isLoading: false,
         error: null,
         currentAccountProtocol: null,
+        currentInstance: (this.get().currentAccountProtocol !== 'atproto' ? this.get().currentInstance : null), // Null out currentInstance if it was this ATP account
       })
       console.log('[Store Mixin] Store updated after successful atproto logout.')
     } catch (err) {
@@ -173,8 +173,11 @@ export function atprotoMixins (Store) {
           isLoading: false,
           error: null,
           currentAccountProtocol: 'atproto', // Set current protocol
+          currentInstance: new URL(getAgentPdsUrl()).hostname, // Set currentInstance to PDS hostname
+          // Clear potentially conflicting AP state
+          currentRegisteredInstanceName: null,
         })
-        console.log(`[Store Mixin] Store updated after session resume. Current DID: ${session.did}`)
+        console.log(`[Store Mixin] Store updated after session resume. Current DID: ${session.did}, PDS: ${getAgentPdsUrl()}`)
         return session // This is the session object from auth, not the profile
       } else {
         console.log('[Store Mixin] No session to resume from API.')
@@ -182,6 +185,7 @@ export function atprotoMixins (Store) {
           currentAtprotoSessionDid: null,
           isAtprotoSessionActive: false,
           isLoading: false,
+          // Do not null out currentInstance here, an AP session might still be active
         })
         return null
       }

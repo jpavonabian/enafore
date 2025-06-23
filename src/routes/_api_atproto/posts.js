@@ -9,14 +9,14 @@ import agent from './agent.js'
  * @param {Array<object>} [postDetails.facets] - Rich text facets (mentions, links, tags).
  * @param {object} [postDetails.embed] - A single top-level embed object (e.g., for images, external link, quote post).
  *                                        Example image embed: { $type: 'app.bsky.embed.images', images: [{ image: blobRef, alt: 'alt text' }] }
- * @param {string} [postDetails.replyToUri] - AT URI of the post being replied to (for root).
- * @param {string} [postDetails.replyToCid] - CID of the post being replied to (for parent).
+ * @param {object} [postDetails.reply] - Optional reply object with `root` and `parent` properties,
+ *                                       each having `uri` and `cid`.
  * @param {Array<string>} [postDetails.langs] - Language codes (e.g., ['en', 'ja']).
  * @returns {Promise<object>} Object containing `uri` and `cid` of the new post.
  */
-export async function createPost ({ text, facets, embed, replyToUri, replyToCid, langs }) { // Changed 'embeds' to 'embed'
+export async function createPost ({ text, facets, embed, reply, langs }) { // Removed replyToUri, replyToCid, added reply object
   if (!agent.hasSession) throw new Error('No active session. Please login first.')
-  console.log('[ATProto Posts API] Creating post:', { text, embed, replyToUri })
+  console.log('[ATProto Posts API] Creating post:', { text, embed, reply })
 
   const postRecord = {
     $type: 'app.bsky.feed.post',
@@ -32,19 +32,12 @@ export async function createPost ({ text, facets, embed, replyToUri, replyToCid,
     postRecord.facets = facets
   }
 
-  if (embed) { // Changed from 'embeds && embeds.length > 0'
+  if (embed) {
     postRecord.embed = embed;
   }
 
-  if (replyToUri && replyToCid) {
-    postRecord.reply = {
-      root: { uri: replyToUri, cid: replyToCid },
-      parent: { uri: replyToUri, cid: replyToCid }
-      // This basic structure assumes replyToUri and replyToCid are for the direct parent,
-      // and if it's a top-level reply, parent is also the root.
-      // The calling action (_actions/compose.js) now attempts to provide a more accurate
-      // reply object with distinct root & parent if available from the UI context.
-    }
+  if (reply && reply.root && reply.parent) { // Check for well-formed reply object
+    postRecord.reply = reply;
   }
 
   try {

@@ -68,10 +68,8 @@ export async function setReblogged (statusId, reblogged) {
     if (currentAccountProtocol !== 'atproto') {
       await database.setStatusReblogged(currentInstance, statusId, reblogged)
     } else {
-      // TODO: Persist the repost state for atproto post in DB
-      // e.g., update a `is_reposted_by_me` flag and `my_repost_uri` on the stored ATProto post.
-      // This would require a function like `database.setAtprotoPostRepostedState(pdsHostname, postUri, reposted, repostUri)`
-      console.log(`[Action reblog] ATProto repost/unrepost for ${statusId.uri} successful. DB update for repost state pending.`)
+       // DB update for repost state is now handled by store.setPostRepostUri -> getAtprotoPost/setAtprotoPost
+       console.log(`[Action reblog] ATProto repost/unrepost for ${statusId.uri} successful. DB persistence handled by store mixin.`)
     }
   } catch (e) {
     console.error('[Action reblog] Error:', e)
