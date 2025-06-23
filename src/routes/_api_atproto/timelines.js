@@ -49,7 +49,10 @@ function transformAtprotoPostToEnaforeStatus (feedViewPost) {
     // Enafore's boolean flags based on viewer state
     favorited: !!post.viewer?.like,
     reblogged: !!post.viewer?.repost,
-    // TODO: bookmarked, muted - if viewer state includes these in future ATProto versions
+    // TODO: bookmarked (client-side), muted (viewer.muted on actor/thread) - if viewer state includes these in future ATProto versions
+    client_isBookmarked: false, // Default client-side bookmark state
+    mutedConversation: false, // No direct equivalent on post, would be thread mute state
+    pinned: false, // No direct equivalent for profile pins on post itself
 
     // Fields for DB indexes and threading
     replyParentUri: null,
@@ -57,66 +60,66 @@ function transformAtprotoPostToEnaforeStatus (feedViewPost) {
 
     // Embeds (images, external links, other posts)
     media_attachments: [],
-    card: null, // For external link previews
+    card: null,
+    quote: null, // Renamed from quote_post for Enafore consistency
 
     // Enafore specific fields with defaults or placeholders
-    visibility: 'public', // ATProto posts are generally public on AppViews
-    application: { name: post.record?.via || 'Unknown (via atproto)' }, // Use 'via' if available
+    plainTextContent: post.record?.text || '',
+    editedAt: null, // ATProto posts are immutable
+    visibility: 'public',
+    application: { name: post.record?.via || 'Unknown (via atproto)' },
     mentions: [],
     tags: [],
-    emojis: [],   // Remains empty, ATProto handles emojis differently
-    poll: null,   // Explicitly null as not supported by app.bsky.feed.post
+    emojis: [],
+    poll: null,
     spoiler_text: '',
     sensitive: false,
+    localOnly: false, // Not applicable to ATProto
   }
 
   // Handle embeds (images, external links, quoted posts)
   if (post.embed) {
     if (post.embed.$type === 'app.bsky.embed.images#view') {
       enoStatus.media_attachments = post.embed.images.map(img => ({
-        id: img.thumb, // No stable ID from Mastodon, use thumb URI for now
-        type: 'image', // Assuming image, could be video if supported
+        id: img.thumb,
+        type: 'image',
         url: img.fullsize,
         preview_url: img.thumb,
         remote_url: img.fullsize,
         description: img.alt,
-        blurhash: null, // ATProto doesn't typically provide blurhash here
+        blurhash: null,
       }))
     } else if (post.embed.$type === 'app.bsky.embed.external#view') {
       enoStatus.card = {
         url: post.embed.external.uri,
         title: post.embed.external.title,
         description: post.embed.external.description,
-        image: post.embed.external.thumb || null, // URL of preview image
+        image: post.embed.external.thumb || null,
         type: 'link',
       }
     } else if (post.embed.$type === 'app.bsky.embed.record#view') {
-      // This is a quote post (or reply to a post being quoted)
-      // The actual quoted post is in post.embed.record
       if (post.embed.record?.$type === 'app.bsky.feed.defs#postView') {
-        enoStatus.quote_post = transformAtprotoPostToEnaforeStatus({ post: post.embed.record }); // Pass the inner PostView
-      } else if (post.embed.record?.$type === 'app.bsky.embed.record#viewRecord') { // Simpler record, might be from a lightweight embed
-         enoStatus.quote_post = transformAtprotoPostToEnaforeStatus({
-            post: { // Construct a minimal PostView-like structure for transformation
+        enoStatus.quote = transformAtprotoPostToEnaforeStatus({ post: post.embed.record });
+      } else if (post.embed.record?.$type === 'app.bsky.embed.record#viewRecord') {
+         enoStatus.quote = transformAtprotoPostToEnaforeStatus({
+            post: {
                 uri: post.embed.record.uri,
                 cid: post.embed.record.cid,
-                author: post.embed.record.author, // ProfileViewBasic
-                value: post.embed.record.value, // The actual post record (e.g. app.bsky.feed.post)
-                indexedAt: post.embed.record.indexedAt || post.indexedAt, // Fallback to outer post's indexedAt
+                author: post.embed.record.author,
+                value: post.embed.record.value,
+                indexedAt: post.embed.record.indexedAt || post.indexedAt,
                 labels: post.embed.record.labels,
-                // Counts and viewer state will be missing for this minimal quote
             }
         });
       } else if (post.embed.record?.$type === 'app.bsky.embed.record#viewNotFound' || post.embed.record?.$type === 'app.bsky.embed.record#viewBlocked') {
-        enoStatus.quote_post = { error: post.embed.record.$type.split('#')[1] , uri: post.embed.record?.uri };
+        enoStatus.quote = { error: post.embed.record.$type.split('#')[1] , uri: post.embed.record?.uri };
       }
     } else if (post.embed.$type === 'app.bsky.embed.recordWithMedia#view') {
-        // Handle the record part (quoted post)
-        const recordEmbed = post.embed.record; // This is an app.bsky.embed.record#view
+        const recordEmbed = post.embed.record;
         if (recordEmbed?.record?.$type === 'app.bsky.feed.defs#postView') {
-            enoStatus.quote_post = transformAtprotoPostToEnaforeStatus({ post: recordEmbed.record });
+            enoStatus.quote = transformAtprotoPostToEnaforeStatus({ post: recordEmbed.record });
         } else if (recordEmbed?.record?.$type === 'app.bsky.embed.record#viewRecord') {
-             enoStatus.quote_post = transformAtprotoPostToEnaforeStatus({
+             enoStatus.quote = transformAtprotoPostToEnaforeStatus({
                 post: {
                     uri: recordEmbed.record.uri, cid: recordEmbed.record.cid,
                     author: recordEmbed.record.author, value: recordEmbed.record.value,
@@ -124,10 +127,9 @@ function transformAtprotoPostToEnaforeStatus (feedViewPost) {
                 }
             });
         } else if (recordEmbed?.record?.$type === 'app.bsky.embed.record#viewNotFound' || recordEmbed?.record?.$type === 'app.bsky.embed.record#viewBlocked') {
-            enoStatus.quote_post = { error: recordEmbed.record.$type.split('#')[1], uri: recordEmbed.record?.uri };
+            enoStatus.quote = { error: recordEmbed.record.$type.split('#')[1], uri: recordEmbed.record?.uri };
         }
 
-        // Handle the media part
         const mediaEmbed = post.embed.media;
         if (mediaEmbed?.$type === 'app.bsky.embed.images#view') {
             enoStatus.media_attachments = mediaEmbed.images.map(img => ({
