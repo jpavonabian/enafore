@@ -320,4 +320,155 @@ export function atprotoMixins (Store) {
       this.set({ atprotoNotificationsLoading: false, atprotoNotificationsError: err.message })
     }
   }
+
+  // Helper function to find and update a status in all relevant timeline caches within the store
+  // This is a simplified version. A real implementation would need to iterate through various timeline arrays
+  // where full status objects are stored (e.g., different `timelineData_timelineItemSummaries[instance][timeline]` arrays,
+  // or a potential central cache of fully hydrated posts if Enafore uses one).
+  // For now, it focuses on `timelineData_timelineItemSummaries`.
+  function _updateAtprotoStatusInAllTimelines(storeInstance, postUri, updateFn) {
+    const storeState = storeInstance.get();
+    let changed = false;
+    const keysToUpdate = []; // Collect keys of timelines that changed to set them specifically
+
+    for (const stateKey in storeState) {
+      // Check if this state property holds timeline data (could be timelineItemSummaries or other relevant structures)
+      if (stateKey.startsWith('timelineData_') && typeof storeState[stateKey] === 'object' && storeState[stateKey] !== null) {
+        const timelineDataGroup = storeState[stateKey]; // e.g., storeState.timelineData_timelineItemSummaries
+
+        for (const instanceName in timelineDataGroup) { // instanceName here is pdsHostname for atproto
+          const instanceTimelines = timelineDataGroup[instanceName];
+          if (typeof instanceTimelines === 'object' && instanceTimelines !== null) {
+            for (const timelineName in instanceTimelines) {
+              let items = instanceTimelines[timelineName];
+              if (Array.isArray(items)) {
+                let itemUpdatedInThisTimeline = false;
+                const newItems = items.map(item => {
+                  // Check if it's the target post and an atproto post
+                  if (item && item.id === postUri && item.protocol === 'atproto') {
+                    changed = true;
+                    itemUpdatedInThisTimeline = true;
+                    return updateFn(item); // Apply the update function
+                  }
+                  return item;
+                });
+                if (itemUpdatedInThisTimeline) {
+                  // This direct modification might not trigger Svelte's reactivity if items is a nested object.
+                  // It's often better to do this.set({ [stateKey]: newTimelineDataGroup })
+                  timelineDataGroup[instanceName][timelineName] = newItems;
+                  keysToUpdate.push(stateKey);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    if (changed) {
+      // To ensure reactivity, update the top-level keys that were modified.
+      const finalChanges = {};
+      new Set(keysToUpdate).forEach(key => finalChanges[key] = { ...storeState[key] });
+      if (Object.keys(finalChanges).length > 0) {
+        storeInstance.set(finalChanges);
+        console.log(`[Store Mixin Helper] Updated status ${postUri} in relevant cached timelines.`);
+      }
+    }
+  }
+
+
+  Store.prototype.setPostLikeUri = function (pdsHostname, postUri, likeRecordUri, isLiked) {
+    console.log(`[Store Mixin] setPostLikeUri for post ${postUri}. Like URI: ${likeRecordUri}, Is Liked: ${isLiked}`)
+    _updateAtprotoStatusInAllTimelines(this, postUri, (status) => {
+      const newStatus = { ...status };
+      newStatus.myLikeUri = likeRecordUri;
+      newStatus.favorited = isLiked; // Keep Enafore's boolean flag consistent
+
+      // Optimistic count update
+      if (typeof newStatus.likeCount !== 'number') newStatus.likeCount = 0;
+      const oldIsLiked = status.myLikeUri && status.myLikeUri !== null; // Infer previous liked state
+
+      if (isLiked && !oldIsLiked) {
+        newStatus.likeCount++;
+      } else if (!isLiked && oldIsLiked) {
+        newStatus.likeCount = Math.max(0, newStatus.likeCount - 1);
+      }
+      // Ensure viewer state is updated if it exists (more aligned with bsky app.bsky.feed.defs#postView)
+      newStatus.viewer = { ...(newStatus.viewer || {}), like: likeRecordUri };
+
+      console.log(`[Store Mixin] Optimistically updated post ${postUri}: liked=${isLiked}, likeCount=${newStatus.likeCount}, likeUri=${likeRecordUri}`);
+      return newStatus;
+    });
+
+    // Persist this change to the specific post in ATPROTO_POSTS_STORE
+    getAtprotoPost(pdsHostname, postUri).then(postFromDb => {
+      if (postFromDb) {
+        const updatedPostForDb = { ...postFromDb };
+        updatedPostForDb.myLikeUri = likeRecordUri;
+        updatedPostForDb.viewer = { ...(updatedPostForDb.viewer || {}), like: likeRecordUri };
+        if (typeof updatedPostForDb.likeCount !== 'number') updatedPostForDb.likeCount = 0;
+
+        const oldIsLiked = postFromDb.myLikeUri && postFromDb.myLikeUri !== null;
+        if (isLiked && !oldIsLiked) {
+          updatedPostForDb.likeCount++;
+        } else if (!isLiked && oldIsLiked) {
+          updatedPostForDb.likeCount = Math.max(0, updatedPostForDb.likeCount - 1);
+        }
+        // Also update the 'favorited' boolean for consistency if it's stored in DB model
+        updatedPostForDb.favorited = isLiked;
+
+        setAtprotoPost(pdsHostname, updatedPostForDb)
+          .then(() => console.log(`[Store Mixin DB] Persisted like state for post ${postUri}`))
+          .catch(err => console.error(`[Store Mixin DB] Error persisting like state for post ${postUri}:`, err));
+      } else {
+        console.warn(`[Store Mixin DB] Post ${postUri} not found in DB for persisting like state.`)
+      }
+    }).catch(err => console.error(`[Store Mixin DB] Error fetching post ${postUri} for persisting like state:`, err));
+  }
+
+  Store.prototype.setPostRepostUri = function (pdsHostname, postUri, repostRecordUri, isReposted) {
+    console.log(`[Store Mixin] setPostRepostUri for post ${postUri}. Repost URI: ${repostRecordUri}, Is Reposted: ${isReposted}`)
+    _updateAtprotoStatusInAllTimelines(this, postUri, (status) => {
+      const newStatus = { ...status };
+      newStatus.myRepostUri = repostRecordUri;
+      newStatus.reblogged = isReposted; // Keep Enafore's boolean flag consistent
+
+      if (typeof newStatus.repostCount !== 'number') newStatus.repostCount = 0;
+      const oldIsReposted = status.myRepostUri && status.myRepostUri !== null;
+
+      if (isReposted && !oldIsReposted) {
+        newStatus.repostCount++;
+      } else if (!isReposted && oldIsReposted) {
+        newStatus.repostCount = Math.max(0, newStatus.repostCount - 1);
+      }
+      newStatus.viewer = { ...(newStatus.viewer || {}), repost: repostRecordUri };
+
+      console.log(`[Store Mixin] Optimistically updated post ${postUri}: reposted=${isReposted}, repostCount=${newStatus.repostCount}, repostUri=${repostRecordUri}`);
+      return newStatus;
+    });
+
+    // Persist this change to the specific post in ATPROTO_POSTS_STORE
+    getAtprotoPost(pdsHostname, postUri).then(postFromDb => {
+      if (postFromDb) {
+        const updatedPostForDb = { ...postFromDb };
+        updatedPostForDb.myRepostUri = repostRecordUri;
+        updatedPostForDb.viewer = { ...(updatedPostForDb.viewer || {}), repost: repostRecordUri };
+        if (typeof updatedPostForDb.repostCount !== 'number') updatedPostForDb.repostCount = 0;
+
+        const oldIsReposted = postFromDb.myRepostUri && postFromDb.myRepostUri !== null;
+        if (isReposted && !oldIsReposted) {
+          updatedPostForDb.repostCount++;
+        } else if (!isReposted && oldIsReposted) {
+          updatedPostForDb.repostCount = Math.max(0, updatedPostForDb.repostCount - 1);
+        }
+        // Also update the 'reblogged' boolean for consistency if it's stored in DB model
+        updatedPostForDb.reblogged = isReposted;
+
+        setAtprotoPost(pdsHostname, updatedPostForDb)
+          .then(() => console.log(`[Store Mixin DB] Persisted repost state for post ${postUri}`))
+          .catch(err => console.error(`[Store Mixin DB] Error persisting repost state for post ${postUri}:`, err));
+      } else {
+        console.warn(`[Store Mixin DB] Post ${postUri} not found in DB for persisting repost state.`)
+      }
+    }).catch(err => console.error(`[Store Mixin DB] Error fetching post ${postUri} for persisting repost state:`, err));
+  }
 }

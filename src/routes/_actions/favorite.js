@@ -52,15 +52,22 @@ export async function setFavorited (statusId, favorited) {
   }
 
   // Optimistic update
-  // For ATProto, setStatusFavorited needs to handle the object statusId and also store/remove the likeUri
-  store.setStatusFavorited(currentInstance, statusId, favorited, currentAccountProtocol)
+  const idForStoreModification = currentAccountProtocol === 'atproto' ? statusId.uri : statusId;
+  store.setStatusFavorited(currentInstance, idForStoreModification, favorited, currentAccountProtocol);
+  // For ATProto, we also need to optimistically update like counts and potentially the viewer's like URI on the status object
+  // This is more involved as it requires finding the status in various store locations.
+  // For now, the boolean flag is set. Counts and specific like URI will update on next fetch or via setPostLikeUri.
 
   try {
     const response = await networkPromise
     if (currentAccountProtocol === 'atproto' && favorited && response && response.uri) {
-      // Store the URI of the like record for future unliking
-      store.setPostLikeUri(currentInstance, statusId.uri, response.uri) // statusId.uri is post URI
+      // Store the URI of the like record for future unliking and update the specific status object
+      store.setPostLikeUri(currentInstance, statusId.uri, response.uri, favorited);
+    } else if (currentAccountProtocol === 'atproto' && !favorited) {
+      // Clear the like URI on successful unlike
+      store.setPostLikeUri(currentInstance, statusId.uri, null, favorited);
     }
+
     // For ActivityPub, database.setStatusFavorited handles it.
     // For ATProto, we need a similar DB update for the post's like state/count and potentially the like record URI.
     // This might be part of a larger `updateAtprotoPostInDb` function.

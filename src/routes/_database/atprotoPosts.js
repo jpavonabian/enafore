@@ -153,4 +153,79 @@ export async function getAtprotoPostsByAuthor (pdsHostname, authorDid, limit = 2
 
 
 // TODO: Add functions for fetching posts for threads (by replyParentUri or replyRootUri)
-// TODO: Add deletion functions if needed.
+
+/**
+ * Deletes an atproto post from the database and its references in timelines.
+ * @param {string} pdsHostname - The hostname of the PDS.
+ * @param {string} postUri - The AT URI of the post to delete.
+ */
+export async function deleteAtprotoPost (pdsHostname, postUri) {
+  if (!postUri) {
+    console.error('[DB atprotoPosts] Attempted to delete post without URI.')
+    return Promise.reject(new Error('Post URI is required for deletion.'))
+  }
+  const db = await getDatabase(pdsHostname)
+
+  // 1. Delete from ATPROTO_POSTS_STORE
+  await dbPromise(db, ATPROTO_POSTS_STORE, 'readwrite', (store) => {
+    store.delete(postUri)
+  }).then(() => {
+    console.log(`[DB atprotoPosts] Deleted post URI: ${postUri} from ${ATPROTO_POSTS_STORE}`)
+  }).catch(error => {
+    console.error(`[DB atprotoPosts] Error deleting post URI ${postUri} from ${ATPROTO_POSTS_STORE}:`, error)
+    throw error // Re-throw to indicate failure
+  })
+
+  // 2. Delete references from ATPROTO_TIMELINES_STORE
+  // This requires iterating and finding keys where the value is postUri,
+  // or if postUri is part of the key, finding those keys.
+  // Current key: feedUri + '\u0000' + sortableKey(createdAt, postUri) | Value: postUri
+  await dbPromise(db, ATPROTO_TIMELINES_STORE, 'readwrite', (store, callback) => {
+    const keysToDelete = []
+    store.openCursor().onsuccess = (event) => {
+      const cursor = event.target.result
+      if (cursor) {
+        // Check if value matches postUri OR if postUri is embedded in the key in a predictable way.
+        // With current key structure, value is postUri.
+        // Also, the postUri is at the end of the key: feedUri + '\u0000' + createdAt + '\u0000' + postUri
+        if (cursor.value === postUri || (typeof cursor.key === 'string' && cursor.key.endsWith('\u0000' + postUri))) {
+          keysToDelete.push(cursor.key)
+        }
+        cursor.continue()
+      } else {
+        // All records iterated, now delete collected keys
+        let deleteCount = 0
+        if (keysToDelete.length === 0) {
+          callback() // No keys to delete
+          return
+        }
+        keysToDelete.forEach(key => {
+          store.delete(key).onsuccess = () => {
+            deleteCount++
+            if (deleteCount === keysToDelete.length) {
+              console.log(`[DB atprotoPosts] Deleted ${deleteCount} references for post URI: ${postUri} from ${ATPROTO_TIMELINES_STORE}`)
+              callback() // All deletions are done
+            }
+          }
+          store.delete(key).onerror = (e) => {
+             console.error(`[DB atprotoPosts] Error deleting key ${key} from ${ATPROTO_TIMELINES_STORE}`, e.target.error)
+             deleteCount++; // Count it as processed to not hang indefinitely
+             if (deleteCount === keysToDelete.length) {
+                callback();
+             }
+          }
+        })
+      }
+    }
+    store.openCursor().onerror = (event) => {
+        console.error("[DB atprotoPosts] Error opening cursor for deleting from timelines_store", event.target.error);
+        callback(event.target.error); // Propagate error
+    }
+  }).catch(error => {
+    console.error(`[DB atprotoPosts] Error cleaning up timelines for post URI ${postUri}:`, error)
+    // Don't necessarily throw here if main post deletion succeeded, but log it.
+  })
+
+  // TODO: Also remove from ATPROTO_FEED_CURSORS_STORE if this post was a cursor? Unlikely.
+  // TODO: Consider if other stores reference this post URI and need cleanup.
+}

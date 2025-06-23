@@ -20,13 +20,25 @@ function transformAtprotoPostToEnaforeStatus (feedViewPost) {
       // Enafore specific account fields might need defaults or be omitted
       acct: post.author.handle, // Or format like handle@pds
       username: post.author.handle,
+      url: `https://bsky.app/profile/${post.author.did}`, // Author's profile URL
     },
+    url: `https://bsky.app/profile/${post.author.did}/post/${post.uri.split('/').pop()}`, // Post's web URL
+
     replyCount: post.replyCount || 0,
     repostCount: post.repostCount || 0,
     likeCount: post.likeCount || 0,
     protocol: 'atproto',
     cid: post.cid, // Content ID of the post record
     indexedAt: post.indexedAt, // When the post was indexed by the AppView
+    language: post.record?.langs && post.record.langs.length > 0 ? post.record.langs[0] : null,
+
+    // Viewer's interaction state with this specific post
+    myLikeUri: post.viewer?.like,
+    myRepostUri: post.viewer?.repost,
+    // Enafore's boolean flags based on viewer state
+    favorited: !!post.viewer?.like,
+    reblogged: !!post.viewer?.repost,
+    // TODO: bookmarked, muted - if viewer state includes these in future ATProto versions
 
     // Fields for DB indexes and threading
     replyParentUri: null,
@@ -38,12 +50,13 @@ function transformAtprotoPostToEnaforeStatus (feedViewPost) {
 
     // Enafore specific fields with defaults or placeholders
     visibility: 'public', // ATProto posts are generally public on AppViews
-    application: { name: 'Unknown (via atproto)' }, // Placeholder
-    mentions: [], // To be parsed from record.facets or text
-    tags: [],     // To be parsed from record.facets or text
-    emojis: [],   // Custom emojis, not standard in quite the same way
-    spoiler_text: '', // Content warnings are handled differently (labels)
-    sensitive: false, // Derived from labels
+    application: { name: post.record?.via || 'Unknown (via atproto)' }, // Use 'via' if available
+    mentions: [],
+    tags: [],
+    emojis: [],   // Remains empty, ATProto handles emojis differently
+    poll: null,   // Explicitly null as not supported by app.bsky.feed.post
+    spoiler_text: '',
+    sensitive: false,
   }
 
   // Handle embeds (images, external links, quoted posts)

@@ -100,17 +100,65 @@ export async function postStatus (realm, text, inReplyToId, mediaIds,
       //   console.warn(`[Action compose] Could not fetch newly created ATProto post ${newPostUri} for timeline update.`)
       // }
       // For a simpler optimistic update (without fetching):
-      const optimisticPost = {
-        id: newPostUri, uri: newPostUri, cid: newPostCid, content: text, protocol: 'atproto',
-        author: store.getCurrentAtprotoUser(), // This is async, so call it earlier or use cached user
-        createdAt: new Date().toISOString(),
-        // ... other essential fields for display ...
-        // This needs to be a fully fleshed out Enafore status object
-      };
-      // addStatusOrNotification(currentInstance, 'home', optimisticPost) // This needs getCurrentAtprotoUser to be sync or data pre-fetched.
-      console.log('[Action compose] TODO: Optimistically add ATProto post to timeline or re-fetch timeline.')
-      emit('postedStatus', realm, inReplyToUuid) // Notify UI
-      // TODO: Fetch updated timeline or user feed to see the new post.
+      // getCurrentAtprotoUser is async, so await it.
+      const currentUser = await store.getCurrentAtprotoUser();
+
+      if (!currentUser) {
+        console.error('[Action compose] ATProto: Could not get current user for optimistic post. Aborting optimistic update.');
+        // Post was still made, but local timeline won't update until next fetch.
+        // UI should still be notified the post attempt was made.
+        emit('postedStatus', realm, inReplyToUuid);
+      } else {
+        const optimisticPost = {
+          id: newPostUri, // AT URI
+          uri: newPostUri,
+          cid: newPostCid,
+          content: text, // record.text
+          protocol: 'atproto',
+          author: currentUser, // From store.getCurrentAtprotoUser()
+          createdAt: atpPostDetails.createdAt || new Date().toISOString(), // from input or now
+          indexedAt: new Date().toISOString(), // Optimistic indexedAt
+
+          // Default/empty values for a new post
+          replyCount: 0,
+          repostCount: 0,
+          likeCount: 0,
+          media_attachments: [], // TODO: Populate if media was uploaded
+          card: null,
+          quote_post: null, // TODO: Populate if it was a quote post
+          mentions: [], // TODO: Populate from facets
+          tags: [],     // TODO: Populate from facets
+          emojis: [],
+          spoiler_text: '', // ATProto uses labels, direct mapping is complex
+          sensitive: false, // TODO: Derive from labels if any were applied to self-post
+          visibility: 'public', // ATProto posts are generally public
+          application: { name: 'Enafore (atproto)' }, // Placeholder
+
+          // Reply specific (if applicable)
+          in_reply_to_id: atpPostDetails.replyToUri || null,
+          in_reply_to_account_id: null, // Would need to fetch parent post's author DID
+          replyParentUri: atpPostDetails.replyToUri || null,
+          replyRootUri: atpPostDetails.replyRootUri || (atpPostDetails.replyToUri ? atpPostDetails.replyToUri : null), // If only parent, parent is root
+
+          // ATProto specific viewer state for new post by current user
+          viewer: {
+            like: undefined, // No like URI yet
+            repost: undefined, // No repost URI yet
+          },
+          myLikeUri: undefined,
+          myRepostUri: undefined,
+          favorited: false, // Not liked by self initially
+          reblogged: false, // Not reposted by self initially
+        };
+
+        // Add to local store (e.g., home timeline)
+        // currentInstance for atproto should be the PDS hostname
+        addStatusOrNotification(currentInstance, 'home', optimisticPost);
+        console.log('[Action compose] Optimistically added ATProto post to home timeline.')
+        emit('postedStatus', realm, inReplyToUuid); // Notify UI
+        // TODO: Fetch updated timeline or user feed to see the new post eventually for consistency,
+        // or rely on streaming if that gets implemented for atproto.
+      }
 
     } else { // ActivityPub
       if (editId) {

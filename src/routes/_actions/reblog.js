@@ -51,14 +51,18 @@ export async function setReblogged (statusId, reblogged) {
   }
 
   // Optimistic update
-  // store.setStatusReblogged needs to be protocol-aware for statusId structure and what fields to update
-  store.setStatusReblogged(currentInstance, statusId, reblogged, currentAccountProtocol)
+  const idForStoreModification = currentAccountProtocol === 'atproto' ? statusId.uri : statusId;
+  store.setStatusReblogged(currentInstance, idForStoreModification, reblogged, currentAccountProtocol);
+  // Similar to likes, counts and specific repost URI will update on next fetch or via setPostRepostUri.
 
   try {
     const response = await networkPromise
     if (currentAccountProtocol === 'atproto' && reblogged && response && response.uri) {
       // Store the URI of the repost record for future un-reposting
-      store.setPostRepostUri(currentInstance, statusId.uri, response.uri) // statusId.uri is original post URI
+      store.setPostRepostUri(currentInstance, statusId.uri, response.uri, reblogged);
+    } else if (currentAccountProtocol === 'atproto' && !reblogged) {
+      // Clear the repost URI on successful un-repost
+      store.setPostRepostUri(currentInstance, statusId.uri, null, reblogged);
     }
 
     if (currentAccountProtocol !== 'atproto') {
