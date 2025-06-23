@@ -1,25 +1,36 @@
 import atprotoAgent, { setPdsUrl as setAgentPdsUrl, getPdsUrl as getAgentPdsUrl } from '../_api_atproto/agent.js'
 import { login as atprotoLogin, logout as atprotoLogout, resumeAppSession as atprotoResumeAppSession, getActiveSessionData } from '../_api_atproto/auth.js'
+import { setAtprotoAccount, getAtprotoAccount } from '../_database/atprotoAccounts.js'
+import { BskyAgent } from '@atproto/api' // For fetching profile after login
 
 export function atprotoMixins (Store) {
   Store.prototype.atprotoLogin = async function (identifier, password, pdsUrl) {
     console.log(`[Store Mixin] atprotoLogin called for identifier: ${identifier}, PDS: ${pdsUrl}`)
     this.set({ isLoading: true, error: null })
+    let sessionData
     try {
       // Ensure agent's PDS URL is set before login
-      if (pdsUrl) {
-        console.log(`[Store Mixin] Setting agent PDS URL to: ${pdsUrl}`)
-        setAgentPdsUrl(pdsUrl) // This also updates localStorage via agent.js
-      } else {
-        const existingPds = this.get().atprotoPdsUrls[identifier] ||
-                           (typeof localStorage !== 'undefined' && localStorage.getItem('atproto_pds_url')) ||
-                           'https://bsky.social'
-        console.log(`[Store Mixin] Using existing or default PDS URL: ${existingPds} for ${identifier}`)
-        setAgentPdsUrl(existingPds)
+      const effectivePdsUrl = pdsUrl || this.get().atprotoPdsUrls[identifier] || (typeof localStorage !== 'undefined' && localStorage.getItem('atproto_pds_url')) ||'https://bsky.social'
+      if (getAgentPdsUrl() !== effectivePdsUrl) {
+        console.log(`[Store Mixin] Setting agent PDS URL to: ${effectivePdsUrl}`)
+        setAgentPdsUrl(effectivePdsUrl)
       }
 
-      const sessionData = await atprotoLogin(identifier, password, getAgentPdsUrl())
+      sessionData = await atprotoLoginApi(identifier, password, getAgentPdsUrl())
       console.log(`[Store Mixin] atprotoLogin API success for DID: ${sessionData.did}`)
+
+      // After successful login, fetch and store the user's profile
+      try {
+        // Use the main agent which now has the session
+        const profile = await atprotoAgent.getProfile({ actor: sessionData.did })
+        if (profile && profile.data) {
+          await setAtprotoAccount(new URL(getAgentPdsUrl()).hostname, profile.data)
+          console.log(`[Store Mixin] User profile for ${sessionData.did} stored in DB.`)
+        }
+      } catch (profileError) {
+        console.error(`[Store Mixin] Failed to fetch or store profile for ${sessionData.did} after login:`, profileError)
+        // Continue without profile, or handle error more gracefully
+      }
 
       const newAtprotoSessions = { ...this.get().atprotoSessions }
       newAtprotoSessions[sessionData.did] = sessionData
@@ -40,6 +51,20 @@ export function atprotoMixins (Store) {
       return sessionData
     } catch (err) {
       console.error('[Store Mixin] atprotoLogin error:', err.message, err)
+      // If login fails, sessionData might be undefined.
+      // If it was a PDS connection issue, sessionData.did might not exist.
+      const failedLoginIdentifier = sessionData?.did || identifier;
+      const pdsHostForFailedLogin = new URL(getAgentPdsUrl() || 'https://bsky.social').hostname;
+      const existingPdsForFailedLogin = this.get().atprotoPdsUrls[failedLoginIdentifier];
+
+      if (!existingPdsForFailedLogin && pdsHostForFailedLogin) {
+        // Store the PDS URL even if login failed, so user doesn't have to re-enter it
+        // Useful if only password was wrong.
+        const newAtprotoPdsUrls = { ...this.get().atprotoPdsUrls };
+        newAtprotoPdsUrls[failedLoginIdentifier] = getAgentPdsUrl(); // Store PDS for the identifier used
+        this.set({ atprotoPdsUrls: newAtprotoPdsUrls });
+        console.log(`[Store Mixin] Saved PDS URL ${getAgentPdsUrl()} for identifier ${failedLoginIdentifier} despite login failure.`);
+      }
       this.set({ isLoading: false, error: err.message, isAtprotoSessionActive: false })
       throw err
     }
@@ -82,15 +107,48 @@ export function atprotoMixins (Store) {
       const session = await atprotoResumeAppSession()
       if (session && session.did) {
         console.log(`[Store Mixin] Session resumed via API for DID: ${session.did}`)
+
+        // Ensure PDS URL is correctly set in the agent from persisted store value if available
+        const pdsHostname = new URL(getAgentPdsUrl()).hostname // agent's current PDS
+        const storedPdsUrlForUser = this.get().atprotoPdsUrls[session.did]
+        if (storedPdsUrlForUser && getAgentPdsUrl() !== storedPdsUrlForUser) {
+            console.log(`[Store Mixin] Resumed session for ${session.did}, PDS mismatch. Agent: ${getAgentPdsUrl()}, Store: ${storedPdsUrlForUser}. Setting agent PDS to stored value.`)
+            setAgentPdsUrl(storedPdsUrlForUser)
+        }
+
+        // Attempt to fetch profile from DB, then from network if not found or stale
+        let userProfile = await getAtprotoAccount(pdsHostname, session.did)
+        if (!userProfile) {
+          console.log(`[Store Mixin] Profile for ${session.did} not in DB, fetching from network...`)
+          try {
+            const profileFromNet = await atprotoAgent.getProfile({ actor: session.did })
+            if (profileFromNet && profileFromNet.data) {
+              await setAtprotoAccount(pdsHostname, profileFromNet.data)
+              userProfile = profileFromNet.data
+              console.log(`[Store Mixin] Fetched and stored profile for ${session.did} from network.`)
+            }
+          } catch (profileError) {
+            console.error(`[Store Mixin] Failed to fetch profile for ${session.did} during session resume:`, profileError)
+          }
+        } else {
+          console.log(`[Store Mixin] Profile for ${session.did} found in DB.`)
+        }
+        // session object from resumeAppSessionApi already contains { did, handle, email, accessJwt, refreshJwt }
+        // userProfile contains { did, handle, displayName, description, avatar, etc. }
+        // We store the full session object from auth API in atprotoSessions.
+        // The DB stores the public profile.
+
         const currentSessions = this.get().atprotoSessions
         const currentPdsUrls = this.get().atprotoPdsUrls
 
         let changes = {}
-        if (!currentSessions[session.did]) {
+        // Ensure the session object from API is in the store
+        if (!currentSessions[session.did] || JSON.stringify(currentSessions[session.did]) !== JSON.stringify(session)) {
             changes.atprotoSessions = {...currentSessions, [session.did]: session }
         }
-        const agentPds = getAgentPdsUrl() // Get PDS URL from agent, which should be persisted/set
-        if (agentPds && !currentPdsUrls[session.did]) { // Only set if not already there or if different?
+        // Ensure PDS URL is in the store
+        const agentPds = getAgentPdsUrl()
+        if (agentPds && (!currentPdsUrls[session.did] || currentPdsUrls[session.did] !== agentPds)) {
             changes.atprotoPdsUrls = {...currentPdsUrls, [session.did]: agentPds}
         }
 
@@ -100,9 +158,10 @@ export function atprotoMixins (Store) {
           isAtprotoSessionActive: true,
           isLoading: false,
           error: null,
+          currentAccountProtocol: 'atproto', // Set current protocol
         })
         console.log(`[Store Mixin] Store updated after session resume. Current DID: ${session.did}`)
-        return session
+        return session // This is the session object from auth, not the profile
       } else {
         console.log('[Store Mixin] No session to resume from API.')
         this.set({

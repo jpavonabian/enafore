@@ -28,6 +28,10 @@ function transformAtprotoPostToEnaforeStatus (feedViewPost) {
     cid: post.cid, // Content ID of the post record
     indexedAt: post.indexedAt, // When the post was indexed by the AppView
 
+    // Fields for DB indexes and threading
+    replyParentUri: null,
+    replyRootUri: null,
+
     // Embeds (images, external links, other posts)
     media_attachments: [],
     card: null, // For external link previews
@@ -90,8 +94,13 @@ function transformAtprotoPostToEnaforeStatus (feedViewPost) {
     if (reply.parent) {
       enoStatus.in_reply_to_id = reply.parent.uri // URI of the parent post
       enoStatus.in_reply_to_account_id = reply.parent.author.did // DID of parent post's author
+      enoStatus.replyParentUri = reply.parent.uri
     }
-    // reply.root could also be mapped if Enafore uses it
+    if (reply.root) {
+      enoStatus.replyRootUri = reply.root.uri
+      // If Enafore has a specific field for root post ID, map it here too.
+      // e.g., enoStatus.conversation_id = reply.root.uri (if that's how Enafore handles it)
+    }
   }
 
   // Handle reposts (reason for the post appearing in the feed)
@@ -113,36 +122,116 @@ function transformAtprotoPostToEnaforeStatus (feedViewPost) {
     // For now, the post URI is used, but this could lead to collisions if not careful with list keys
   }
 
-  // TODO: Parse facets for mentions and tags
-  // post.record.facets
+  // Parse facets for mentions and tags
   if (post.record?.facets) {
+    const textEncoder = new TextEncoder(); // For byte slice
+    const originalTextBytes = textEncoder.encode(post.record.text || "");
+
     post.record.facets.forEach(facet => {
       facet.features.forEach(feature => {
+        // Extract the segment of text this facet applies to
+        let segment = ''
+        if (originalTextBytes.length > 0 && facet.index && typeof facet.index.byteStart !== 'undefined' && typeof facet.index.byteEnd !== 'undefined') {
+            // Ensure byteStart and byteEnd are within bounds
+            const byteStart = Math.max(0, facet.index.byteStart);
+            const byteEnd = Math.min(originalTextBytes.length, facet.index.byteEnd);
+            if (byteStart < byteEnd) {
+                 segment = new TextDecoder().decode(originalTextBytes.slice(byteStart, byteEnd));
+            }
+        }
+
         if (feature.$type === 'app.bsky.richtext.facet#mention') {
+          // The segment for a mention *is* the handle (e.g., "@handle.bsky.social")
+          // We need to strip the "@" for username if Enafore expects that.
+          const username = segment.startsWith('@') ? segment.substring(1) : segment;
           enoStatus.mentions.push({
             id: feature.did, // DID of the mentioned user
-            username: '', // Handle might not be in facet, would need resolving or be part of link text
-            url: `/profile/${feature.did}`, // Placeholder URL scheme
-            acct: feature.did, // Store DID
+            username: username, // Store the handle text from the facet
+            url: `/@${username}`, // More Enafore-like URL (will need base instance/PDS or be relative)
+                                 // Or generate based on DID if preferred: `/profile/${feature.did}`
+            acct: username, // Store handle as acct for consistency with AP display
           })
         } else if (feature.$type === 'app.bsky.richtext.facet#tag') {
-          enoStatus.tags.push({
-            name: feature.tag,
-            url: `/tags/${feature.tag}`, // Placeholder URL scheme
-          })
+          // The segment for a tag *is* the tag text (e.g., "#tagname")
+          // We need to strip the "#" for name if Enafore expects that.
+          const tagName = segment.startsWith('#') ? segment.substring(1) : segment;
+          if (feature.tag === tagName) { // Sanity check if feature.tag is the same as derived from segment
+            enoStatus.tags.push({
+              name: tagName,
+              url: `/tags/${tagName}`, // Placeholder URL scheme
+            })
+          } else {
+            // If feature.tag (from lex) and segment differ, prefer feature.tag if it exists and is valid
+            // This case should be rare if record.text and facets are in sync.
+             enoStatus.tags.push({
+              name: feature.tag, // feature.tag is the authoritative tag value without '#'
+              url: `/tags/${feature.tag}`,
+            })
+          }
+        } else if (feature.$type === 'app.bsky.richtext.facet#link') {
+          // Could potentially map links to cards if Enafore uses cards for general links
+          // For now, these are just part of the rich text.
         }
       })
     })
   }
 
-  // TODO: Handle labels for sensitivity/content warnings
-  // post.author.labels, post.labels
-  const allLabels = (post.author.labels || []).concat(post.labels || []);
-  if (allLabels.some(label => ['porn', 'sexual', 'nudity', 'gore'].includes(label.val))) {
+  // Handle labels for sensitivity/content warnings
+  // Combine labels from the post itself and from the author's profile
+  const postLabels = post.labels?.map(label => label.val) || [];
+  const authorLabels = post.author.labels?.map(label => label.val) || []; // Labels on the author profile itself
+  const allApplicableLabels = new Set([...postLabels, ...authorLabels]);
+
+  // Standard Bluesky content labels that imply sensitivity
+  const sensitiveCategories = [
+    'porn', 'sexual', 'nudity', // Sexual content
+    'gore', 'corpse', 'self-harm', // Violence, self-harm
+    // Consider 'nsfl' as a general sensitive flag if present
+    // 'graphic-media' could also imply sensitivity
+  ];
+
+  // Check for specific content warning labels like "!warn" or "cw"
+  // These often precede a user-defined spoiler text.
+  const contentWarningLabel = allApplicableLabels.has('!warn') || allApplicableLabels.has('cw');
+
+  if (sensitiveCategories.some(cat => allApplicableLabels.has(cat))) {
+    enoStatus.sensitive = true;
+  }
+
+  // Attempt to derive spoiler_text if a content warning label is used
+  // This is a heuristic. Bluesky doesn't have a dedicated spoiler_text field like Mastodon.
+  // Some clients might use a convention like "cw: [spoiler text]" or put it after a "!warn" label.
+  // For now, if there's a generic 'content-warning' type label, we might just set a generic spoiler.
+  // Or, if a label itself contains the warning text (e.g. some custom label schemes).
+  // This part is highly dependent on conventions Enafore wants to adopt for Bluesky content.
+
+  // Example: if a post is labeled 'nsfw' but not with a more specific category, mark sensitive.
+  if (allApplicableLabels.has('nsfw') && !enoStatus.sensitive) {
       enoStatus.sensitive = true;
-      // Note: Bluesky uses granular labels. Enafore uses a single 'sensitive' flag and 'spoiler_text'.
-      // A direct mapping for spoiler_text from labels is complex.
-      // Could use a generic spoiler if sensitive, or if specific 'content-warning' type labels are used.
+  }
+
+  // If the post is marked as sensitive and no specific spoiler text can be derived from record.text + facets,
+  // a generic spoiler might be used by the UI based on enoStatus.sensitive = true.
+  // Enafore's `spoiler_text` is often user-defined. ATProto's `!warn` label is the closest.
+  // If a `!warn` label is present on the *post itself* (not the author), we could try to infer.
+  if (post.labels?.some(l => l.val === '!warn')) {
+      enoStatus.sensitive = true; // Ensure sensitive is true if !warn is used
+      // A more advanced approach would be to look for text following the "!warn" facet if such a facet existed.
+      // For now, a generic spoiler text if !warn is present and sensitive.
+      if (!enoStatus.spoiler_text && enoStatus.sensitive) {
+          enoStatus.spoiler_text = "Content Warning"; // Generic spoiler
+      }
+  }
+
+  // Check for "hide" label from moderation services (like Bluesky's default mod service)
+  // This might indicate content that should be collapsed or behind a click-through by default.
+  if (allApplicableLabels.has('hide')) {
+      // Enafore doesn't have a direct "hidden_by_moderation" state on status object.
+      // This might be handled by filtering logic before display, or by setting sensitive + generic spoiler.
+      if (!enoStatus.sensitive) {
+          enoStatus.sensitive = true;
+          enoStatus.spoiler_text = enoStatus.spoiler_text || "Content Warning (moderation)";
+      }
   }
 
 

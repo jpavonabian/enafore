@@ -16,11 +16,41 @@ import { scheduleIdleTask } from '../_utils/scheduleIdleTask.js'
 import { sortItemSummariesForThread, sortItemSummariesForNotificationBatch } from '../_utils/sortItemSummaries.ts'
 import { rehydrateStatusOrNotification } from './rehydrateStatusOrNotification.js'
 import li from 'li'
+import { setMultipleAtprotoPosts } from '../_database/atprotoPosts.js'
+import { setAtprotoFeedTimeline } from '../_database/atprotoFeeds.js'
 
-async function storeFreshTimelineItemsInDatabase (instanceName, timelineName, items) {
-  console.log('storeFreshTimelineItemsInDatabase start', timelineName)
-  await database.insertTimelineItems(instanceName, timelineName, items)
-  console.log('storeFreshTimelineItemsInDatabase inserted', timelineName)
+
+async function storeFreshTimelineItemsInDatabase (instanceName, timelineName, items, currentAccountProtocol) {
+  console.log(`[Timeline Action] storeFreshTimelineItemsInDatabase for ${instanceName}, timeline: ${timelineName}, protocol: ${currentAccountProtocol}, items: ${items.length}`)
+  if (currentAccountProtocol === 'atproto') {
+    const pdsHostname = new URL(atprotoAgent.service.toString()).hostname // instanceName here is the PDS hostname for atproto
+    // `items` are already transformed by `_api_atproto/timelines.js`
+    await setMultipleAtprotoPosts(pdsHostname, items)
+
+    // Also need to store the URIs in the feed-specific timeline store and the cursor
+    // The cursor is now stored in `timelineNextPageId` in the main store for this timeline.
+    const { timelineNextPageId } = store.getForTimeline(instanceName, timelineName, 'timelineNextPageId') // This might not work as getForTimeline expects a property
+    const atprotoCursor = store.get().timelineData_timelineNextPageId?.[instanceName]?.[timelineName]
+
+
+    // `timelineName` for atproto needs to be mapped to the actual feed URI or a stable identifier like "home"
+    // For now, assume timelineName can be used as feedUri for custom feeds, or "home"
+    let feedIdentifier = timelineName;
+    if (timelineName === 'home') { // Or however we identify the main 'following' feed
+        // Use a consistent identifier for the home feed, e.g., from agent session DID if it's user-specific
+        // feedIdentifier = `at://${atprotoAgent.session.did}/app.bsky.feed.generator/home`; // This is an example, 'home' is not a real feed gen
+        // Or just use a special string like "home_following"
+        feedIdentifier = 'home_following';
+    }
+    // If timelineName is an actual at:// feed URI, use it directly.
+
+    await setAtprotoFeedTimeline(pdsHostname, feedIdentifier, items, atprotoCursor)
+    console.log(`[Timeline Action] Stored ${items.length} ATProto posts and feed data for ${feedIdentifier} in ${pdsHostname}`)
+
+  } else { // ActivityPub
+    await database.insertTimelineItems(instanceName, timelineName, items)
+    console.log(`[Timeline Action] Stored ${items.length} ActivityPub items for ${timelineName} in ${instanceName}`)
+  }
 }
 
 async function updateStatus_ (instanceName, accessToken, statusId) {
@@ -190,7 +220,7 @@ async function fetchPagedItems (instanceName, accessToken, timelineName) {
   store.setForTimeline(instanceName, timelineName, { timelineNextPageId: newNextPageId })
 
   console.log('[Timeline Action] Storing fresh paged items in database...')
-  await storeFreshTimelineItemsInDatabase(instanceName, timelineName, items) // This DB might need protocol awareness
+  await storeFreshTimelineItemsInDatabase(instanceName, timelineName, items, currentAccountProtocol)
 
   console.log('[Timeline Action] Adding paged items to store summaries...')
   await addPagedTimelineItems(instanceName, timelineName, items)
@@ -207,8 +237,10 @@ async function fetchTimelineItems (instanceName, accessToken, timelineName, onli
   } else {
     try {
       console.log('fetchTimelineItemsFromNetwork')
+      // currentAccountProtocol is already fetched in fetchTimelineItemsFromNetwork
       items = await fetchTimelineItemsFromNetwork(instanceName, accessToken, timelineName, lastTimelineItemId)
-      await storeFreshTimelineItemsInDatabase(instanceName, timelineName, items)
+      const { currentAccountProtocol } = store.get() // Re-fetch here to pass to storeFreshTimelineItemsInDatabase
+      await storeFreshTimelineItemsInDatabase(instanceName, timelineName, items, currentAccountProtocol)
     } catch (e) {
       console.error(e)
       /* no await */ toast.say('intl.showingOfflineContent')
