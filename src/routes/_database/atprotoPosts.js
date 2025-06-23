@@ -226,6 +226,56 @@ export async function deleteAtprotoPost (pdsHostname, postUri) {
     // Don't necessarily throw here if main post deletion succeeded, but log it.
   })
 
-  // TODO: Also remove from ATPROTO_FEED_CURSORS_STORE if this post was a cursor? Unlikely.
-  // TODO: Consider if other stores reference this post URI and need cleanup.
+  // TODO: Also remove from ATPROTO_FEED_CURSORS_STORE if this post was a cursor? Unlikely. -> This can be removed.
+  // TODO: Consider if other stores reference this post URI and need cleanup. (Largely handled by design, specific cases if any would be new features)
 }
+
+/**
+ * Retrieves replies to a specific parent post, ordered by creation date (ascending).
+ * @param {string} pdsHostname - The hostname of the PDS.
+ * @param {string} parentPostUri - The AT URI of the parent post.
+ * @param {number} [limit] - Max number of replies to retrieve.
+ * @param {string} [sinceTimestamp] - To paginate, get replies created after this ISO timestamp (exclusive).
+ * @returns {Promise<Array<object>>} A list of post objects (replies).
+ */
+export async function getAtprotoReplies (pdsHostname, parentPostUri, limit = 50, sinceTimestamp = null) {
+  if (!parentPostUri) {
+    console.error('[DB atprotoPosts] parentPostUri is required for getAtprotoReplies.');
+    return Promise.resolve([]);
+  }
+  const db = await getDatabase(pdsHostname);
+  return dbPromise(db, ATPROTO_POSTS_STORE, 'readonly', (store, callback) => {
+    const index = store.index(ATPROTO_REPLY_PARENT_URI_INDEX);
+    const range = IDBKeyRange.only(parentPostUri); // Get all posts whose replyParentUri matches
+
+    const request = index.getAll(range);
+
+    request.onsuccess = () => {
+      let replies = request.result;
+      if (!replies) {
+        callback([]);
+        return;
+      }
+      // Sort by createdAt ascending (oldest first for thread display)
+      replies.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+      if (sinceTimestamp) {
+        replies = replies.filter(reply => new Date(reply.createdAt).getTime() > new Date(sinceTimestamp).getTime());
+      }
+
+      if (limit && replies.length > limit) {
+        replies = replies.slice(0, limit);
+      }
+      callback(replies);
+    };
+    request.onerror = (event) => {
+      console.error("[DB atprotoPosts] Error in getAtprotoReplies getAll request:", event.target.error);
+      callback([]);
+    };
+  }).catch(error => {
+    console.error(`[DB atprotoPosts] Error in getAtprotoReplies for parent ${parentPostUri}:`, error);
+    throw error;
+  });
+}
+
+// TODO: Implement getAtprotoThread(pdsHostname, rootPostUri) - more complex, involves recursive fetching or multiple queries.

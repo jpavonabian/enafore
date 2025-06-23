@@ -43,6 +43,14 @@ export const getPdsUrl = () => {
 
 // Function to explicitly try resuming session if needed, e.g. on app load.
 // BskyAgent with persistSession should handle this, but this can be a manual trigger.
+
+/**
+ * Ensures that the agent attempts to use any persisted session.
+ * BskyAgent with `persistSession` in its constructor should handle this automatically on load.
+ * This function can serve as a manual check or trigger, primarily for logging or specific startup sequences.
+ * @async
+ * @returns {Promise<boolean>} True if a session is active after the check, false otherwise.
+ */
 export const ensureSession = async () => {
   if (!agent.hasSession && persistedSession) {
     try {

@@ -168,16 +168,24 @@ export async function postStatus (realm, text, inReplyToId, mediaIds, // mediaId
           replyCount: 0,
           repostCount: 0,
           likeCount: 0,
-          media_attachments: atpPostDetails.embed?.$type === 'app.bsky.embed.images'
-            ? atpPostDetails.embed.images.map(imgEmb => ({
-                type: 'image', // Assuming all are images for now
-                url: imgEmb.image.ref?.$link || '', // This is the CID link, not a direct viewable URL yet
-                preview_url: '', // Bluesky image service might generate thumbs, or client can use fullsize
-                remote_url: imgEmb.image.ref?.$link || '',
-                description: imgEmb.alt,
-                // id: needs a stable ID, maybe the CID string?
-                id: imgEmb.image.ref?.$link,
-              }))
+          media_attachments: (atpPostDetails.embed?.$type === 'app.bsky.embed.images' && currentUser)
+            ? atpPostDetails.embed.images.map(imgEmb => {
+                const imageCid = imgEmb.image.ref?.$link;
+                const pdsHostname = new URL(currentUser.pds || atprotoAgent.service.toString()).hostname;
+                // Construct a potential image URL. Note: Bluesky's actual image URLs might be different (e.g., CDN).
+                // This is a guess based on com.atproto.sync.getBlob.
+                // A more robust solution might involve an image service URL prefix from instance capabilities.
+                const imageUrl = imageCid ? `https://${pdsHostname}/xrpc/com.atproto.sync.getBlob?did=${currentUser.did}&cid=${imageCid}` : '';
+
+                return {
+                  type: 'image',
+                  url: imageUrl,
+                  preview_url: imageUrl, // For optimistic, use full URL; actual thumbs might differ
+                  remote_url: imageUrl, // Or null if only using `url`
+                  description: imgEmb.alt,
+                  id: imageCid || new Date().getTime().toString() + Math.random(), // Use CID if available, else a temp ID
+                };
+              })
             : [],
           card: null, // TODO: Populate if external link embed
           quote_post: null, // TODO: Populate if it was a quote post

@@ -1,5 +1,16 @@
 import agent, { setPdsUrl, getPdsUrl, ensureSession } from './agent.js'
 
+/**
+ * Logs into an ATProto account (PDS).
+ * Sets the PDS URL on the agent if provided or found in localStorage.
+ * The session is persisted by the agent's `persistSession` callback.
+ * @async
+ * @param {string} identifier - User's handle or DID.
+ * @param {string} password - User's app password.
+ * @param {string} [pdsUrl] - Optional PDS URL. If not provided, uses agent's current or persisted PDS URL.
+ * @returns {Promise<object>} The session data object from `agent.login()`.
+ * @throws {Error} If login fails, throws an error with a user-friendly message.
+ */
 export async function login (identifier, password, pdsUrl) {
   console.log(`[ATProto Auth] Attempting login for ${identifier} on PDS: ${pdsUrl || getPdsUrl() || 'default'}`)
   // Set PDS URL before login attempt, this also updates localStorage
@@ -43,6 +54,12 @@ export async function login (identifier, password, pdsUrl) {
   }
 }
 
+/**
+ * Attempts to resume an existing ATProto session.
+ * Relies on the agent's `persistSession` mechanism and `ensureSession` helper.
+ * @async
+ * @returns {Promise<object|null>} The session data object if resumed successfully, otherwise null.
+ */
 export async function resumeAppSession () {
   console.log('[ATProto Auth] Attempting to resume app session...')
   try {
@@ -62,6 +79,11 @@ export async function resumeAppSession () {
   }
 }
 
+/**
+ * Logs out of the current ATProto session.
+ * Clears the session from the agent and persisted storage (via `persistSession` callback and manual localStorage clear).
+ * @async
+ */
 export async function logout () {
   console.log('[ATProto Auth] Attempting logout...')
   try {
@@ -85,6 +107,10 @@ export async function logout () {
   }
 }
 
+/**
+ * Retrieves the active ATProto session data from the agent.
+ * @returns {object|null} The session object if a session is active, otherwise null.
+ */
 export function getActiveSessionData () {
   if (agent.hasSession) {
     return agent.session
@@ -92,10 +118,18 @@ export function getActiveSessionData () {
   return null
 }
 
+/**
+ * Gets the handle of the currently authenticated ATProto user.
+ * @returns {string|null} The user's handle or null if no active session.
+ */
 export function getHandle () {
   return agent.hasSession ? agent.session.handle : null
 }
 
+/**
+ * Gets the DID of the currently authenticated ATProto user.
+ * @returns {string|null} The user's DID or null if no active session.
+ */
 export function getDid () {
   return agent.hasSession ? agent.session.did : null
 }

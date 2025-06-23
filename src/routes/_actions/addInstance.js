@@ -136,7 +136,13 @@ async function registerNewInstance (code) {
     currentInstance: currentRegisteredInstanceName,
     loggedInInstancesInOrder,
     instanceThemes,
-    currentAccountProtocol: 'activitypub' // Set protocol for ActivityPub
+    currentAccountProtocol: 'activitypub', // Set protocol for ActivityPub
+    // Clear ATProto active state
+    currentAtprotoSessionDid: null,
+    isAtprotoSessionActive: false,
+    atprotoNotificationsCursor: null, // Also reset any ATP specific pagination/data
+    atprotoNotifications: [],
+    atprotoUnreadNotificationCount: 0
   })
   store.save()
   const { enableGrayscale } = store.get()

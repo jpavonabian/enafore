@@ -1,9 +1,10 @@
 import agent from './agent.js'
-import {නේ } from '../_utils/ajax.js' // Not strictly needed here, but good for consistency if other utils are used
+// Removed unused ajax import: import {නේ } from '../_utils/ajax.js'
 
 /**
- * Creates a new post (skeet).
- * @param {object} postDetails
+ * Creates a new post (skeet) on ATProto.
+ * @async
+ * @param {object} postDetails - Details of the post to be created.
  * @param {string} postDetails.text - The text content of the post.
  * @param {Array<object>} [postDetails.facets] - Rich text facets (mentions, links, tags).
  * @param {object} [postDetails.embed] - A single top-level embed object (e.g., for images, external link, quote post).
@@ -37,13 +38,13 @@ export async function createPost ({ text, facets, embed, replyToUri, replyToCid,
 
   if (replyToUri && replyToCid) {
     postRecord.reply = {
-      root: { uri: replyToUri, cid: replyToCid }, // Should be the original post in the thread
-      parent: { uri: replyToUri, cid: replyToCid } // Should be the direct parent post
-      // SDK might adjust root/parent if only one is given, or if they are the same.
-      // If replying to a reply, root is the start of thread, parent is the post directly replied to.
+      root: { uri: replyToUri, cid: replyToCid },
+      parent: { uri: replyToUri, cid: replyToCid }
+      // This basic structure assumes replyToUri and replyToCid are for the direct parent,
+      // and if it's a top-level reply, parent is also the root.
+      // The calling action (_actions/compose.js) now attempts to provide a more accurate
+      // reply object with distinct root & parent if available from the UI context.
     }
-    // If only replying to a root post, root and parent are the same.
-    // This logic needs to be set correctly by the calling UI/action based on context.
   }
 
   try {
@@ -238,11 +239,12 @@ export async function deletePost (postUri) {
 
 
 /**
- * Uploads an image and returns the embed object for a post.
+ * Uploads an image and returns an object suitable for an image item in an `app.bsky.embed.images` embed.
+ * @async
  * @param {File} file - The image file object.
  * @param {string} [altText=''] - Alt text for the image.
- * @returns {Promise<object|null>} The image embed object or null if upload fails.
- * Example embed: { $type: 'app.bsky.embed.images', images: [{ image: blobRef, alt: 'alt text' }] }
+ * @returns {Promise<object>} An object `{ image: BlobRef, alt: string }`.
+ * @throws {Error} If upload fails (e.g., network error, auth error, server error, file too large).
  */
 export async function uploadImageAndGetEmbed(file, altText = '') {
   if (!agent.hasSession) throw new Error('No active session. Please login first.');

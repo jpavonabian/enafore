@@ -50,6 +50,14 @@ export function atprotoMixins (Store) {
         isLoading: false,
         error: null,
         currentAccountProtocol: 'atproto',
+        // Clear ActivityPub active state
+        currentInstance: null,
+        currentRegisteredInstanceName: null,
+        // Any other AP specific active timeline data might also need clearing here
+        // e.g., if there are AP specific notification arrays in the root of the store:
+        // apNotificationItems: [],
+        // apUnreadNotificationCount: 0,
+        // For now, focusing on core instance/session identifiers.
       })
       console.log(`[Store Mixin] Store updated after successful atproto login. Current DID: ${sessionData.did}`)
       return sessionData

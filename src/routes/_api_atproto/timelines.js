@@ -1,8 +1,19 @@
 import agent from './agent.js'
 import { getActiveSessionData } from './auth.js'
 
-// Helper to transform atproto post/feed view to Enafore's status structure
+/**
+ * Transforms an ATProto FeedViewPost (or a similar PostView structure) into Enafore's common status object format.
+ * This function is crucial for adapting Bluesky/ATProto data to Enafore's existing UI components and data handling logic.
+ * @param {object} feedViewPost - The FeedViewPost object from ATProto (e.g., from getTimeline, getAuthorFeed).
+ *                                It typically includes `post` (PostView), and optional `reply`, `reason`.
+ * @returns {object|null} An Enafore-compatible status object, or null if input is invalid.
+ */
 function transformAtprotoPostToEnaforeStatus (feedViewPost) {
+  // Ensure post and author exist, as they are fundamental
+  if (!feedViewPost || !feedViewPost.post || !feedViewPost.post.author) {
+    console.warn('[ATProto Transform] Invalid feedViewPost object received, missing post or author:', feedViewPost);
+    return null;
+  }
   const { post, reply, reason } = feedViewPost
 
   // Basic structure from post author and record
@@ -251,7 +262,20 @@ function transformAtprotoPostToEnaforeStatus (feedViewPost) {
   return enoStatus
 }
 
-
+/**
+ * Fetches a timeline (feed) from ATProto.
+ * This can be the user's following feed, an author's feed, or a custom feed by URI.
+ * @async
+ * @param {string} [algorithm] - The feed identifier.
+ *                             - If `undefined` or a known non-URI algorithm name (e.g., 'home_following_feed'), fetches the user's "Following" timeline.
+ *                             - If a DID or handle string (e.g., `did:plc:xyz` or `handle.bsky.social`), fetches that user's author feed.
+ *                             - If an `at://` URI, fetches that custom feed generator.
+ * @param {number} [limit=30] - Number of items to fetch.
+ * @param {string} [cursor] - Cursor for pagination.
+ * @returns {Promise<{items: Array<object>, headers: object}>}
+ *          An object containing an array of transformed Enafore status objects and a headers object with `_atproto_cursor`.
+ * @throws {Error} If fetching fails or no active session.
+ */
 export async function getTimeline (algorithm, limit, cursor) {
   const session = getActiveSessionData()
   if (!session) {

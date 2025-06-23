@@ -2,13 +2,19 @@ import agent from './agent.js'
 import { transformAtprotoPostToEnaforeStatus } from './timelines.js' // For embedded posts
 
 /**
- * Transforms an ATProto notification item into Enafore's notification structure.
- * @param {object} atpNotification - The notification object from agent.listNotifications().
- * @returns {object} An Enafore-compatible notification object.
+ * Transforms an raw ATProto notification object (from `agent.listNotifications()`)
+ * into a more Enafore-friendly structure.
+ * @param {object} atpNotification - The raw notification object from the ATProto API.
+ *                                 Expected to have properties like `uri`, `cid`, `author`, `reason`,
+ *                                 `reasonSubject`, `record`, `isRead`, `indexedAt`.
+ * @returns {object|null} An Enafore-compatible notification object, or null if the input is invalid.
+ *                        The returned object includes `id`, `type`, `createdAt`, `account`,
+ *                        `status` (which may be partial), `protocol`, and `_raw`.
  */
 export function transformAtprotoNotification (atpNotification) {
-  if (!atpNotification || !atpNotification.uri) {
-    return null // Or throw error
+  if (!atpNotification || !atpNotification.uri || !atpNotification.author) { // Added author check
+    console.warn('[ATProto Transform] Invalid notification object received, missing essential fields:', atpNotification);
+    return null
   }
 
   const enoNotification = {
