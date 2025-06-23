@@ -1,6 +1,10 @@
 import atprotoAgent, { setPdsUrl as setAgentPdsUrl, getPdsUrl as getAgentPdsUrl } from '../_api_atproto/agent.js'
-import { login as atprotoLogin, logout as atprotoLogout, resumeAppSession as atprotoResumeAppSession, getActiveSessionData } from '../_api_atproto/auth.js'
+import * as atprotoAPI from '../_api_atproto/auth.js' // Keep consistent with other API imports
+import * as atprotoNotificationsAPI from '../_api_atproto/notifications.js' // For notifications
 import { setAtprotoAccount, getAtprotoAccount } from '../_database/atprotoAccounts.js'
+import { setAtprotoPost, getAtprotoPost } from '../_database/atprotoPosts.js' // For persisting like/repost states
+import { setAtprotoNotifications } from '../_database/atprotoNotifications.js' // For saving notifications
+import { database } from '../_database/database.js' // For getAtprotoFeedCursor, setAtprotoFeedCursor
 import { BskyAgent } from '@atproto/api' // For fetching profile after login
 
 export function atprotoMixins (Store) {
@@ -16,7 +20,7 @@ export function atprotoMixins (Store) {
         setAgentPdsUrl(effectivePdsUrl)
       }
 
-      sessionData = await atprotoLoginApi(identifier, password, getAgentPdsUrl())
+      sessionData = await atprotoAPI.login(identifier, password, getAgentPdsUrl()) // Changed to atprotoAPI.login
       console.log(`[Store Mixin] atprotoLogin API success for DID: ${sessionData.did}`)
 
       // After successful login, fetch and store the user's profile
@@ -75,7 +79,7 @@ export function atprotoMixins (Store) {
     console.log(`[Store Mixin] atprotoLogout called. Current DID: ${currentDid}`)
     this.set({ isLoading: true })
     try {
-      await atprotoLogout() // Clears session in agent & localStorage
+      await atprotoAPI.logout() // Changed to atprotoAPI.logout
       console.log(`[Store Mixin] atprotoLogout API call finished.`)
 
       const newAtprotoSessions = { ...this.get().atprotoSessions }
@@ -104,7 +108,7 @@ export function atprotoMixins (Store) {
     console.log('[Store Mixin] atprotoResumeSession called.')
     this.set({ isLoading: true })
     try {
-      const session = await atprotoResumeAppSession()
+      const session = await atprotoAPI.resumeAppSession() // Changed to atprotoAPI.resumeAppSession
       if (session && session.did) {
         console.log(`[Store Mixin] Session resumed via API for DID: ${session.did}`)
 
@@ -249,24 +253,32 @@ export function atprotoMixins (Store) {
     }
 
     const pdsHostname = new URL(getAgentPdsUrl()).hostname
-    const currentCursor = cursor || this.get().atprotoNotificationsCursor // Use passed cursor or stored one
+    let cursorToUse = cursor || this.get().atprotoNotificationsCursor
+    const notifFeedIdentifier = 'notifications_all'; // Stable key for notifications feed cursor
 
-    console.log(`[Store Mixin] fetchAtprotoNotifications called. DID: ${currentDid}, Limit: ${limit}, Cursor: ${currentCursor}`)
+    if (!cursorToUse && typeof cursor !== 'string') { // Initial fetch or refresh, try DB
+        const dbCursor = await database.getAtprotoFeedCursor(pdsHostname, notifFeedIdentifier);
+        if (typeof dbCursor === 'string') {
+            console.log(`[Store Mixin] fetchAtprotoNotifications: Using cursor from DB for ${notifFeedIdentifier}: ${dbCursor}`);
+            cursorToUse = dbCursor;
+        }
+    }
+
+    console.log(`[Store Mixin] fetchAtprotoNotifications called. DID: ${currentDid}, Limit: ${limit}, Cursor: ${cursorToUse}`)
     this.set({ atprotoNotificationsLoading: true, atprotoNotificationsError: null })
 
     try {
-      const { notifications: fetchedNotifications, cursor: newCursor } = await atprotoAPI.listNotifications(limit, currentCursor)
+      const { notifications: fetchedNotifications, cursor: newApiCursor } = await atprotoNotificationsAPI.listNotifications(limit, cursorToUse)
 
-      // Save to DB
-      await setAtprotoNotifications(pdsHostname, fetchedNotifications) // We don't pass cursor here, cursor is for the feed.
-                                                                      // setAtprotoNotifications itself could call setAtprotoFeedCursor if needed.
-      // For now, let's manage the MAIN_NOTIFICATIONS_FEED_ID cursor separately via atprotoFeeds.js if needed
-      // Or, more simply, listNotifications is the source of truth for the "timeline" of notifications.
-      // The DB storage of notifications is primarily for individual lookup and perhaps offline cache.
-      // The `ATPROTO_NOTIFICATION_TIMELINES_STORE` is for ordering.
+      // Save notifications to their respective DB stores
+      await setAtprotoNotifications(pdsHostname, fetchedNotifications)
+
+      // Save the new cursor to DB and Svelte store
+      await database.setAtprotoFeedCursor(pdsHostname, notifFeedIdentifier, newApiCursor);
+      console.log(`[Store Mixin] fetchAtprotoNotifications: Stored new cursor for ${notifFeedIdentifier} (DB): ${newApiCursor}`);
 
       // Update store state
-      const existingNotifications = cursor ? this.get().atprotoNotifications : [] // If cursor, append. Else, replace.
+      const existingNotifications = cursorToUse ? this.get().atprotoNotifications : [] // If cursorToUse had a value, append. Else, replace.
       const allNotifications = [...existingNotifications, ...fetchedNotifications]
       // Simple de-duplication by notification URI (id)
       const uniqueNotifications = Array.from(new Map(allNotifications.map(n => [n.id, n])).values())
@@ -294,7 +306,7 @@ export function atprotoMixins (Store) {
     if (!this.get().isAtprotoSessionActive) return
     console.log('[Store Mixin] updateAtprotoUnreadCount called.')
     try {
-      const count = await atprotoAPI.countUnreadNotifications()
+      const count = await atprotoNotificationsAPI.countUnreadNotifications()
       this.set({ atprotoUnreadNotificationCount: count })
       console.log(`[Store Mixin] ATProto unread notification count updated: ${count}`)
     } catch (err) {
@@ -308,7 +320,7 @@ export function atprotoMixins (Store) {
     console.log(`[Store Mixin] markAtprotoNotificationsSeen called. SeenAt: ${seenAt}`)
     this.set({ atprotoNotificationsLoading: true }) // Indicate activity
     try {
-      await atprotoAPI.updateSeenNotifications(seenAt) // API call
+      await atprotoNotificationsAPI.updateSeenNotifications(seenAt) // API call
       this.set({
         atprotoUnreadNotificationCount: 0, // Optimistically set unread count to 0
         atprotoNotificationsLoading: false

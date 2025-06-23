@@ -55,6 +55,30 @@ export async function setAtprotoFeedTimeline (pdsHostname, feedUri, posts, nextC
 }
 
 /**
+ * Sets or updates the pagination cursor for a given feed.
+ * @param {string} pdsHostname - The hostname of the PDS.
+ * @param {string} feedUri - The AT URI of the feed or a special identifier (e.g., "home_following", "notifications_all").
+ * @param {string | null | undefined} cursor - The cursor string. Null or undefined might signify end of feed or reset.
+ */
+export async function setAtprotoFeedCursor (pdsHostname, feedUri, cursor) {
+  if (!feedUri) {
+    console.error('[DB atprotoFeeds] setAtprotoFeedCursor: feedUri is required.');
+    return Promise.reject(new Error('feedUri is required for setting cursor.'));
+  }
+  const db = await getDatabase(pdsHostname);
+  const record = { feedUri, cursor: cursor }; // cursor can be null or undefined
+
+  return dbPromise(db, ATPROTO_FEED_CURSORS_STORE, 'readwrite', (store) => {
+    store.put(cloneForStorage(record)); // Use put to insert or update
+  }).then(() => {
+    console.log(`[DB atprotoFeeds] Set cursor for feed ${feedUri} to: "${cursor}" in ${pdsHostname}`);
+  }).catch(error => {
+    console.error(`[DB atprotoFeeds] Error setting cursor for feed ${feedUri}:`, error);
+    throw error;
+  });
+}
+
+/**
  * Retrieves an ordered list of post URIs for a given feed.
  * @param {string} pdsHostname - The hostname of the PDS.
  * @param {string} feedUri - The AT URI of the feed or a special name.

@@ -142,27 +142,47 @@ async function fetchTimelineItemsFromNetwork (instanceName, accessToken, timelin
       };
 
       let atprotoAlgorithmOrActor;
+      let atprotoFeedIdentifier; // For DB key for cursor storage
 
       if (timelineName.startsWith('account/')) {
-        const accountId = timelineName.substring('account/'.length).split('/')[0]; // Extracts DID or handle
-        atprotoAlgorithmOrActor = accountId; // Pass DID/handle to getAuthorFeed
+        const accountId = timelineName.substring('account/'.length).split('/')[0];
+        atprotoAlgorithmOrActor = accountId;
+        atprotoFeedIdentifier = `actor_feed:${accountId}`;
         console.log(`[Timeline Action] Mapped Enafore 'account/${accountId}' to ATProto actor feed: ${atprotoAlgorithmOrActor}`);
       } else if (atprotoFeedMap.hasOwnProperty(timelineName)) {
         atprotoAlgorithmOrActor = atprotoFeedMap[timelineName];
-        console.log(`[Timeline Action] Mapped Enafore timeline '${timelineName}' to ATProto algorithm/feed: ${atprotoAlgorithmOrActor}`);
-      } else if (timelineName.startsWith('at://')) { // Already a feed URI
+        atprotoFeedIdentifier = atprotoAlgorithmOrActor || 'home_following'; // Use special key for home
+        console.log(`[Timeline Action] Mapped Enafore timeline '${timelineName}' to ATProto algorithm/feed: ${atprotoAlgorithmOrActor} (DB key: ${atprotoFeedIdentifier})`);
+      } else if (timelineName.startsWith('at://')) {
         atprotoAlgorithmOrActor = timelineName;
+        atprotoFeedIdentifier = timelineName;
         console.log(`[Timeline Action] Using direct ATProto feed URI: ${atprotoAlgorithmOrActor}`);
       } else {
         console.warn(`[Timeline Action] Unmapped Enafore timeline '${timelineName}' for ATProto. Falling back to 'home' (Following).`);
-        atprotoAlgorithmOrActor = undefined; // Fallback to home/following
+        atprotoAlgorithmOrActor = undefined;
+        atprotoFeedIdentifier = 'home_following';
       }
 
-      const { items, headers } = await getAtprotoTimeline(atprotoAlgorithmOrActor, TIMELINE_BATCH_SIZE, lastTimelineItemId)
-      console.log(`[Timeline Action] ATProto timeline fetched. Items: ${items.length}, New Cursor: ${headers._atproto_cursor}`)
-      // Store cursor for next fetch. Enafore uses timelineNextPageId.
-      // The getAtprotoTimeline returns _atproto_cursor in headers.
-      store.setForTimeline(instanceName, timelineName, { timelineNextPageId: headers._atproto_cursor })
+      let cursorToUse = lastTimelineItemId; // lastTimelineItemId is from Svelte store's timelineNextPageId for this specific timeline
+      if (!cursorToUse && typeof lastTimelineItemId !== 'string') { // If truly initial fetch (not just an empty string cursor from a previous fetch that had no 'next')
+        const pdsHostname = new URL(atprotoAgent.service.toString()).hostname;
+        const dbCursor = await database.getAtprotoFeedCursor(pdsHostname, atprotoFeedIdentifier);
+        if (typeof dbCursor === 'string') { // getAtprotoFeedCursor returns undefined if not found, or the string cursor
+          console.log(`[Timeline Action] Using cursor from DB for initial fetch of ${atprotoFeedIdentifier}: ${dbCursor}`);
+          cursorToUse = dbCursor;
+        }
+      }
+
+      const { items, headers } = await getAtprotoTimeline(atprotoAlgorithmOrActor, TIMELINE_BATCH_SIZE, cursorToUse)
+      console.log(`[Timeline Action] ATProto timeline fetched. Items: ${items.length}, New Cursor from API: ${headers._atproto_cursor}`)
+
+      // Store cursor for next fetch in Svelte store AND IndexedDB
+      const newApiCursor = headers._atproto_cursor; // This can be undefined if no more pages
+      store.setForTimeline(instanceName, timelineName, { timelineNextPageId: newApiCursor })
+      const pdsHostname = new URL(atprotoAgent.service.toString()).hostname;
+      await database.setAtprotoFeedCursor(pdsHostname, atprotoFeedIdentifier, newApiCursor);
+      console.log(`[Timeline Action] Stored new cursor for ${atprotoFeedIdentifier} (Svelte & DB): ${newApiCursor}`);
+
       return items
     } else {
       console.log(`[Timeline Action] Fetching ActivityPub timeline for ${instanceName}, timeline: ${timelineName}`)
@@ -215,27 +235,37 @@ async function fetchPagedItems (instanceName, accessToken, timelineName) {
       'federated': 'at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/whats-hot',
     };
     let atprotoAlgorithmOrActor;
+    let atprotoFeedIdentifier; // For DB key for cursor storage
 
     if (timelineName.startsWith('account/')) {
       const accountId = timelineName.substring('account/'.length).split('/')[0];
       atprotoAlgorithmOrActor = accountId;
+      atprotoFeedIdentifier = `actor_feed:${accountId}`;
       console.log(`[Timeline Action] Paging ATProto actor feed: ${atprotoAlgorithmOrActor}`);
     } else if (atprotoFeedMap.hasOwnProperty(timelineName)) {
       atprotoAlgorithmOrActor = atprotoFeedMap[timelineName];
-      console.log(`[Timeline Action] Paging mapped Enafore timeline '${timelineName}' to ATProto algorithm/feed: ${atprotoAlgorithmOrActor}`);
+      atprotoFeedIdentifier = atprotoAlgorithmOrActor || 'home_following';
+      console.log(`[Timeline Action] Paging mapped Enafore timeline '${timelineName}' to ATProto algorithm/feed: ${atprotoAlgorithmOrActor} (DB key: ${atprotoFeedIdentifier})`);
     } else if (timelineName.startsWith('at://')) {
       atprotoAlgorithmOrActor = timelineName;
+      atprotoFeedIdentifier = timelineName;
       console.log(`[Timeline Action] Paging direct ATProto feed URI: ${atprotoAlgorithmOrActor}`);
     } else {
       console.warn(`[Timeline Action] Paging unmapped Enafore timeline '${timelineName}' for ATProto. Falling back to 'home' (Following).`);
       atprotoAlgorithmOrActor = undefined;
+      atprotoFeedIdentifier = 'home_following';
     }
-
+    // timelineNextPageId is the cursor from the Svelte store for this specific timeline
     const { items: atpItems, headers: atpHeaders } = await getAtprotoTimeline(atprotoAlgorithmOrActor, TIMELINE_BATCH_SIZE, timelineNextPageId)
     items = atpItems
-    newNextPageId = atpHeaders._atproto_cursor // Use the returned cursor
-    console.log(`[Timeline Action] ATProto paged fetch. Items: ${items.length}, New Cursor: ${newNextPageId}`)
-    // Note: atproto_cursor might be undefined if no more items
+    newNextPageId = atpHeaders._atproto_cursor
+    console.log(`[Timeline Action] ATProto paged fetch. Items: ${items.length}, New Cursor from API: ${newNextPageId}`)
+
+    // Persist the new cursor to DB (Svelte store update happens below)
+    const pdsHostname = new URL(atprotoAgent.service.toString()).hostname;
+    await database.setAtprotoFeedCursor(pdsHostname, atprotoFeedIdentifier, newNextPageId);
+    console.log(`[Timeline Action] Stored new cursor for ${atprotoFeedIdentifier} (DB): ${newNextPageId}`);
+
   } else {
     console.log(`[Timeline Action] Paging ActivityPub timeline for ${instanceName}, timeline: ${timelineName}`)
     const { items: apItems, headers: apHeaders } = await getActivityPubTimeline(instanceName, accessToken, timelineName, timelineNextPageId, null, TIMELINE_BATCH_SIZE)

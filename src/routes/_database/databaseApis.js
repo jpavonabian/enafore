@@ -12,3 +12,9 @@ export * from './relationships.js'
 export * from './webShare.js'
 export * from './theme.js'
 export * from './mediaUploadFileCache.js'
+
+// ATProto DB function exports
+export * from './atprotoAccounts.js'
+export * from './atprotoPosts.js'
+export * from './atprotoFeeds.js'
+export * from './atprotoNotifications.js'
