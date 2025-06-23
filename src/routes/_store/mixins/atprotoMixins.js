@@ -246,15 +246,38 @@ export function atprotoMixins (Store) {
       postsCount: userProfile?.postsCount || 0,
       banner: userProfile?.banner || null,
       // General fields
-      url: `https://bsky.app/profile/${session.did}`, // Example web URL
-      pds: getAgentPdsUrl(),
+      url: `https://bsky.app/profile/${session.did}`,
+      pds: pdsHostname, // User's actual PDS hostname used for acct
       protocol: 'atproto',
-      acct: `${session.handle}@${pdsHostname}`, // Enafore-style full account string
+      acct: `${session.handle}@${pdsHostname}`,
+
+      createdAt: userProfile?.indexedAt || null, // Profile record indexedAt, not user creation. Or null.
+      locked: false,
+      bot: false,
+      fields: [],
+      emojis: [],
+      moved: null,
+      suspended: false, // Moderation state is more complex (labels, takedown)
+
+      viewer: {
+        muted: !!userProfile?.viewer?.muted,
+        blocking: !!userProfile?.viewer?.blocking, // URI of your block record
+        blockedBy: !!userProfile?.viewer?.blockedBy, // Boolean if they block you
+        following: !!userProfile?.viewer?.following, // URI of your follow record
+        followedBy: !!userProfile?.viewer?.followedBy, // URI of their follow record
+        // Enafore specific convenience flags
+        isMuting: !!userProfile?.viewer?.muted,
+        isBlockingThem: !!userProfile?.viewer?.blocking,
+        isBlockedByThem: !!userProfile?.viewer?.blockedBy,
+        isFollowing: !!userProfile?.viewer?.following,
+        isFollowedBy: !!userProfile?.viewer?.followedBy,
+      },
+
       // Raw data for debugging or more detailed views
       _session: session,
       _profile: userProfile || null
     }
-    console.log(`[Store Mixin] getCurrentAtprotoUser returning for DID ${did}:`, userForUI) // Changed log to userForUI
+    console.log(`[Store Mixin] getCurrentAtprotoUser returning for DID ${did}:`, userForUI)
     return userForUI
   }
 
