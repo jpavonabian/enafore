@@ -24,7 +24,11 @@ import {
   // Notification stores for ATProto
   ATPROTO_NOTIFICATIONS_STORE,
   ATPROTO_NOTIFICATION_TIMELINES_STORE,
-  DB_VERSION_ATPROTO_NOTIFICATION_STORES
+  DB_VERSION_ATPROTO_NOTIFICATION_STORES,
+  // Bookmark store for ATProto
+  ATPROTO_BOOKMARKS_STORE,
+  ATPROTO_BOOKMARKED_AT_INDEX,
+  DB_VERSION_ATPROTO_BOOKMARKS_STORE
 } from './constants.js'
 import { toReversePaddedBigInt } from '../_utils/statusIdSorting.js'
 
@@ -176,6 +180,10 @@ export const migrations = [
   {
     version: DB_VERSION_ATPROTO_NOTIFICATION_STORES,
     migration: atprotoNotificationStoresMigration
+  },
+  {
+    version: DB_VERSION_ATPROTO_BOOKMARKS_STORE,
+    migration: atprotoBookmarksStoreMigration
   }
 ]
 
@@ -213,4 +221,16 @@ function atprotoNotificationStoresMigration (db, tx, done) {
   })
 
   done()
+}
+
+function atprotoBookmarksStoreMigration(db, tx, done) {
+  // ATPROTO_BOOKMARKS_STORE
+  // KeyPath: 'postUri'
+  // Value: { postUri: string, bookmarkedAt: string (ISO) }
+  // Index: 'bookmarkedAt'
+  createObjectStoreHelper(db, ATPROTO_BOOKMARKS_STORE,
+    { keyPath: 'postUri' },
+    { [ATPROTO_BOOKMARKED_AT_INDEX]: 'bookmarkedAt' }
+  );
+  done();
 }

@@ -1,9 +1,11 @@
 import atprotoAgent, { setPdsUrl as setAgentPdsUrl, getPdsUrl as getAgentPdsUrl } from '../_api_atproto/agent.js'
 import * as atprotoAPI from '../_api_atproto/auth.js' // Keep consistent with other API imports
 import * as atprotoNotificationsAPI from '../_api_atproto/notifications.js' // For notifications
+import * as atprotoPostsApi from '../_api_atproto/posts.js' // For getPostLikes, getPostReposters
 import { setAtprotoAccount, getAtprotoAccount } from '../_database/atprotoAccounts.js'
 import { setAtprotoPost, getAtprotoPost } from '../_database/atprotoPosts.js' // For persisting like/repost states
 import { setAtprotoNotifications } from '../_database/atprotoNotifications.js' // For saving notifications
+import { toast } from '../../_components/toast/toast.js' // For user feedback on bookmark actions
 import { database } from '../_database/database.js' // For getAtprotoFeedCursor, setAtprotoFeedCursor
 import { BskyAgent } from '@atproto/api' // For fetching profile after login
 
@@ -491,4 +493,102 @@ export function atprotoMixins (Store) {
       }
     }).catch(err => console.error(`[Store Mixin DB] Error fetching post ${postUri} for persisting repost state:`, err));
   }
+
+  // --- Client-Side Bookmarks for ATProto ---
+
+  Store.prototype.loadAtprotoBookmarks = async function () {
+    const currentDid = this.get().currentAtprotoSessionDid;
+    if (!currentDid || !this.get().isAtprotoSessionActive) {
+      console.warn('[Store Mixin] loadAtprotoBookmarks: No active ATProto session.');
+      this.set({ atprotoBookmarkedPostUris: new Set(), atprotoBookmarksList: [] });
+      return;
+    }
+    const pdsHostname = new URL(getAgentPdsUrl() || this.get().atprotoPdsUrls[currentDid] || 'https://bsky.social').hostname;
+    console.log(`[Store Mixin] loadAtprotoBookmarks for PDS: ${pdsHostname}, User DID: ${currentDid}`);
+    this.set({ atprotoBookmarksLoading: true, atprotoBookmarksError: null });
+
+    try {
+      const bookmarks = await database.getAllAtprotoBookmarks(pdsHostname); // Load all, no limit for now
+      const uris = new Set(bookmarks.map(b => b.postUri));
+
+      // For atprotoBookmarksList, we'll store the raw {postUri, bookmarkedAt} from DB.
+      // The UI component displaying the bookmarks list will be responsible for fetching
+      // full post details for each URI using store.getOrFetchPostByUri or similar.
+      this.set({
+        atprotoBookmarkedPostUris: uris,
+        atprotoBookmarksList: bookmarks.sort((a,b) => new Date(b.bookmarkedAt).getTime() - new Date(a.bookmarkedAt).getTime()), // newest first
+        atprotoBookmarksLoading: false,
+      });
+      console.log(`[Store Mixin] Loaded ${uris.size} ATProto bookmark URIs.`);
+    } catch (err) {
+      console.error('[Store Mixin] loadAtprotoBookmarks error:', err.message, err);
+      this.set({ atprotoBookmarksLoading: false, atprotoBookmarksError: err.message, atprotoBookmarkedPostUris: new Set(), atprotoBookmarksList: [] });
+    }
+  };
+
+  Store.prototype.addAtprotoBookmark = async function (postUri) {
+    const currentDid = this.get().currentAtprotoSessionDid;
+    if (!currentDid || !this.get().isAtprotoSessionActive || !postUri) return;
+    const pdsHostname = new URL(getAgentPdsUrl() || this.get().atprotoPdsUrls[currentDid] || 'https://bsky.social').hostname;
+    console.log(`[Store Mixin] addAtprotoBookmark for post: ${postUri}`);
+
+    try {
+      const newBookmarkRecord = await database.addAtprotoBookmark(pdsHostname, postUri);
+
+      const newUris = new Set(this.get().atprotoBookmarkedPostUris || []);
+      newUris.add(postUri);
+
+      let newBookmarksList = [...(this.get().atprotoBookmarksList || [])];
+      if (!newBookmarksList.find(bm => bm.postUri === postUri)) {
+          newBookmarksList.unshift(newBookmarkRecord); // Add to top (newest)
+          newBookmarksList.sort((a,b) => new Date(b.bookmarkedAt).getTime() - new Date(a.bookmarkedAt).getTime());
+      }
+
+      this.set({ atprotoBookmarkedPostUris: newUris, atprotoBookmarksList: newBookmarksList });
+      _updateAtprotoStatusInAllTimelines(this, postUri, (status) => ({ ...status, client_isBookmarked: true })); // Add client-side flag
+      console.log(`[Store Mixin] Added ATProto bookmark for ${postUri}.`);
+      toast.say('Bookmarked!'); // User feedback
+    } catch (err) {
+      console.error('[Store Mixin] addAtprotoBookmark error:', err.message, err);
+      toast.say(`Failed to add bookmark: ${err.message}`);
+    }
+  };
+
+  Store.prototype.removeAtprotoBookmark = async function (postUri) {
+    const currentDid = this.get().currentAtprotoSessionDid;
+    if (!currentDid || !this.get().isAtprotoSessionActive || !postUri) return;
+    const pdsHostname = new URL(getAgentPdsUrl() || this.get().atprotoPdsUrls[currentDid] || 'https://bsky.social').hostname;
+    console.log(`[Store Mixin] removeAtprotoBookmark for post: ${postUri}`);
+
+    try {
+      await database.removeAtprotoBookmark(pdsHostname, postUri);
+
+      const newUris = new Set(this.get().atprotoBookmarkedPostUris || []);
+      newUris.delete(postUri);
+
+      const newList = (this.get().atprotoBookmarksList || []).filter(bm => bm.postUri !== postUri);
+
+      this.set({ atprotoBookmarkedPostUris: newUris, atprotoBookmarksList: newList });
+      _updateAtprotoStatusInAllTimelines(this, postUri, (status) => ({ ...status, client_isBookmarked: false }));
+      console.log(`[Store Mixin] Removed ATProto bookmark for ${postUri}.`);
+      toast.say('Bookmark removed.'); // User feedback
+    } catch (err) {
+      console.error('[Store Mixin] removeAtprotoBookmark error:', err.message, err);
+      toast.say(`Failed to remove bookmark: ${err.message}`);
+    }
+  };
+
+  Store.prototype.isPostAtprotoBookmarked = function (postUri) {
+    const uris = this.get().atprotoBookmarkedPostUris;
+    // Ensure uris is initialized (e.g. by loadAtprotoBookmarks) before checking
+    if (uris === null && this.get().isAtprotoSessionActive && !this.get().atprotoBookmarksLoading) {
+      // If uris is null (not loaded yet) and we are logged in and not currently loading, trigger a load.
+      // This is a bit of a side-effect in a getter, might be better to ensure loadAtprotoBookmarks
+      // is called on app init or when user logs into ATProto.
+      // For now, just return false if not loaded to avoid triggering async load here.
+      console.warn("[Store Mixin] isPostAtprotoBookmarked: Bookmarks not loaded yet. Call loadAtprotoBookmarks on app/session init.")
+      return false;
+    }
+    return uris ? uris.has(postUri) : false;
+  };
 }

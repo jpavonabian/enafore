@@ -93,23 +93,61 @@ function transformAtprotoPostToEnaforeStatus (feedViewPost) {
     } else if (post.embed.$type === 'app.bsky.embed.record#view') {
       // This is a quote post (or reply to a post being quoted)
       // The actual quoted post is in post.embed.record
-      // We can represent this as a 'card' or a specific quote structure if Enafore supports it
-      // For simplicity, could add to card or a custom 'quote_post' field
-      if (post.embed.record.$type === 'app.bsky.feed.defs#postView') { // Check if it's a valid post view
-        enoStatus.quote_post = transformAtprotoPostToEnaforeStatus({ post: post.embed.record });
-      } else if (post.embed.record.$type === 'app.bsky.embed.record#viewNotFound') {
-        enoStatus.quote_post = { error: 'quoted post not found' }
+      if (post.embed.record?.$type === 'app.bsky.feed.defs#postView') {
+        enoStatus.quote_post = transformAtprotoPostToEnaforeStatus({ post: post.embed.record }); // Pass the inner PostView
+      } else if (post.embed.record?.$type === 'app.bsky.embed.record#viewRecord') { // Simpler record, might be from a lightweight embed
+         enoStatus.quote_post = transformAtprotoPostToEnaforeStatus({
+            post: { // Construct a minimal PostView-like structure for transformation
+                uri: post.embed.record.uri,
+                cid: post.embed.record.cid,
+                author: post.embed.record.author, // ProfileViewBasic
+                value: post.embed.record.value, // The actual post record (e.g. app.bsky.feed.post)
+                indexedAt: post.embed.record.indexedAt || post.indexedAt, // Fallback to outer post's indexedAt
+                labels: post.embed.record.labels,
+                // Counts and viewer state will be missing for this minimal quote
+            }
+        });
+      } else if (post.embed.record?.$type === 'app.bsky.embed.record#viewNotFound' || post.embed.record?.$type === 'app.bsky.embed.record#viewBlocked') {
+        enoStatus.quote_post = { error: post.embed.record.$type.split('#')[1] , uri: post.embed.record?.uri };
       }
     } else if (post.embed.$type === 'app.bsky.embed.recordWithMedia#view') {
-        // Combines a record (e.g. quote post) and media.
-        // Handle both post.embed.record.record and post.embed.media
-        if (post.embed.record?.record?.$type === 'app.bsky.feed.defs#postView') {
-            enoStatus.quote_post = transformAtprotoPostToEnaforeStatus({ post: post.embed.record.record });
+        // Handle the record part (quoted post)
+        const recordEmbed = post.embed.record; // This is an app.bsky.embed.record#view
+        if (recordEmbed?.record?.$type === 'app.bsky.feed.defs#postView') {
+            enoStatus.quote_post = transformAtprotoPostToEnaforeStatus({ post: recordEmbed.record });
+        } else if (recordEmbed?.record?.$type === 'app.bsky.embed.record#viewRecord') {
+             enoStatus.quote_post = transformAtprotoPostToEnaforeStatus({
+                post: {
+                    uri: recordEmbed.record.uri, cid: recordEmbed.record.cid,
+                    author: recordEmbed.record.author, value: recordEmbed.record.value,
+                    indexedAt: recordEmbed.record.indexedAt || post.indexedAt, labels: recordEmbed.record.labels,
+                }
+            });
+        } else if (recordEmbed?.record?.$type === 'app.bsky.embed.record#viewNotFound' || recordEmbed?.record?.$type === 'app.bsky.embed.record#viewBlocked') {
+            enoStatus.quote_post = { error: recordEmbed.record.$type.split('#')[1], uri: recordEmbed.record?.uri };
         }
-        if (post.embed.media?.$type === 'app.bsky.embed.images#view') {
-            enoStatus.media_attachments = post.embed.media.images.map(img => ({ /* ... as above ... */ }));
+
+        // Handle the media part
+        const mediaEmbed = post.embed.media;
+        if (mediaEmbed?.$type === 'app.bsky.embed.images#view') {
+            enoStatus.media_attachments = mediaEmbed.images.map(img => ({
+                id: img.thumb,
+                type: 'image',
+                url: img.fullsize,
+                preview_url: img.thumb,
+                remote_url: img.fullsize,
+                description: img.alt,
+                blurhash: null,
+            }));
+        } else if (mediaEmbed?.$type === 'app.bsky.embed.external#view') {
+            enoStatus.card = {
+                url: mediaEmbed.external.uri,
+                title: mediaEmbed.external.title,
+                description: mediaEmbed.external.description,
+                image: mediaEmbed.external.thumb || null,
+                type: 'link',
+            };
         }
-        // Similar for other media types if any
     }
   }
 

@@ -278,4 +278,60 @@ export async function getAtprotoReplies (pdsHostname, parentPostUri, limit = 50,
   });
 }
 
-// TODO: Implement getAtprotoThread(pdsHostname, rootPostUri) - more complex, involves recursive fetching or multiple queries.
+/**
+ * Retrieves all posts belonging to a specific thread, ordered by creation date (ascending).
+ * @param {string} pdsHostname - The hostname of the PDS.
+ * @param {string} rootPostUri - The AT URI of the root post of the thread.
+ * @returns {Promise<Array<object>>} A list of post objects belonging to the thread.
+ */
+export async function getAtprotoThread (pdsHostname, rootPostUri) {
+  if (!rootPostUri) {
+    console.error('[DB atprotoPosts] rootPostUri is required for getAtprotoThread.');
+    return Promise.resolve([]);
+  }
+  const db = await getDatabase(pdsHostname);
+  return dbPromise(db, ATPROTO_POSTS_STORE, 'readonly', (store, callback) => {
+    const index = store.index(ATPROTO_REPLY_ROOT_URI_INDEX);
+    // Get all posts where replyRootUri matches the rootPostUri
+    // This includes the root post itself if its replyRootUri is set to its own URI,
+    // or if it's null/undefined and we fetch it separately.
+    // For now, assume replyRootUri is consistently set for all posts in a thread.
+    const range = IDBKeyRange.only(rootPostUri);
+
+    const request = index.getAll(range);
+
+    request.onsuccess = async () => {
+      let threadPosts = request.result;
+      if (!threadPosts) {
+        threadPosts = [];
+      }
+
+      // Also fetch the root post itself, as it might not have replyRootUri set (or set to itself)
+      // and thus might not be caught by the index query if the index only includes posts *with* a replyRootUri.
+      // A common pattern is that root posts don't have `reply` fields.
+      try {
+        const rootPost = await getAtprotoPost(pdsHostname, rootPostUri); // Use existing getter
+        if (rootPost) {
+          // Add rootPost if not already included (e.g., if it had replyRootUri pointing to itself)
+          if (!threadPosts.find(p => p.uri === rootPost.uri)) {
+            threadPosts.push(rootPost);
+          }
+        }
+      } catch(err) {
+        console.warn(`[DB atprotoPosts] getAtprotoThread: Could not fetch root post ${rootPostUri} separately:`, err);
+      }
+
+      // Sort by createdAt ascending (oldest first for thread display)
+      threadPosts.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+      callback(threadPosts);
+    };
+    request.onerror = (event) => {
+      console.error("[DB atprotoPosts] Error in getAtprotoThread getAll request:", event.target.error);
+      callback([]);
+    };
+  }).catch(error => {
+    console.error(`[DB atprotoPosts] Error in getAtprotoThread for root ${rootPostUri}:`, error);
+    throw error;
+  });
+}

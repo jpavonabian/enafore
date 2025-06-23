@@ -101,6 +101,14 @@ const nonPersistedState = {
   atprotoNotificationsLoading: false,
   atprotoNotificationsError: null,
   atprotoNotificationsCursor: null, // Stores the cursor for fetching more notifications
+  // For caching lists of likers/reposters per post URI
+  atprotoPostLikersCache: {}, // Structure: { [postUri]: { users: [], cursor?: string, isLoading: false, error: null } }
+  atprotoPostRepostersCache: {}, // Structure: { [postUri]: { users: [], cursor?: string, isLoading: false, error: null } }
+  // ATProto Client-Side Bookmarks
+  atprotoBookmarkedPostUris: null, // Set of bookmarked post URIs for quick lookups. Initialized from DB.
+  atprotoBookmarksList: [],      // Array of {postUri, bookmarkedAt, ?transformedPost} for UI display.
+  atprotoBookmarksLoading: false,
+  atprotoBookmarksError: null,
 }
 
 const state = Object.assign({}, persistedState, nonPersistedState)

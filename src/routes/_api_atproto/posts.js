@@ -294,3 +294,174 @@ export async function uploadImageAndGetEmbed(file, altText = '') {
     throw new Error(message);
   }
 }
+
+/**
+ * Transforms an ATProto ProfileViewBasic into Enafore's standard account object format.
+ * @param {object} profileViewBasic - The ProfileViewBasic object from ATProto.
+ * @param {string} [pdsHostname] - Optional PDS hostname to construct full acct.
+ * @returns {object} An Enafore-compatible account object.
+ */
+function transformProfileViewBasicToEnaforeAccount(profileViewBasic, pdsHostname) {
+  if (!profileViewBasic || !profileViewBasic.did || !profileViewBasic.handle) {
+    console.warn('[ATProto Transform] Invalid ProfileViewBasic object:', profileViewBasic);
+    return null;
+  }
+  const accHostname = pdsHostname || (profileViewBasic.handle.includes('.') ? profileViewBasic.handle.substring(profileViewBasic.handle.indexOf('.') + 1) : 'unknown.pds');
+
+
+  return {
+    id: profileViewBasic.did,
+    did: profileViewBasic.did,
+    username: profileViewBasic.handle,
+    acct: `${profileViewBasic.handle}@${accHostname}`,
+    displayName: profileViewBasic.displayName || profileViewBasic.handle,
+    avatar: profileViewBasic.avatar || null,
+    url: `https://bsky.app/profile/${profileViewBasic.did}`,
+    protocol: 'atproto',
+    // Viewer state (e.g., amIFollowingThisLiker)
+    viewer_following: !!profileViewBasic.viewer?.following,
+    viewer_followed_by: !!profileViewBasic.viewer?.followedBy,
+    viewer_muted: !!profileViewBasic.viewer?.muted,
+    viewer_blocking: !!profileViewBasic.viewer?.blocking, // URI of the block record
+    viewer_blocked_by: !!profileViewBasic.viewer?.blockedBy,
+
+    // Fields Enafore might expect, with defaults as ProfileViewBasic is minimal
+    note: '',
+    header: null,
+    followersCount: null,
+    followingCount: null,
+    statusesCount: null,
+    createdAt: null,
+    locked: false,
+    bot: false,
+    fields: [],
+    emojis: [],
+    moved: null,
+    suspended: false,
+    _raw: profileViewBasic, // Keep raw for debugging or more detailed views
+  };
+}
+
+
+/**
+ * Fetches a list of users who liked a post.
+ * @async
+ * @param {string} postUri - The AT URI of the post.
+ * @param {number} [limit=50] - Max number of users to fetch.
+ * @param {string} [cursor] - Cursor for pagination.
+ * @returns {Promise<{users: Array<object>, cursor: string|undefined}>}
+ *          List of transformed Enafore account objects and the next cursor.
+ * @throws {Error} If fetching fails.
+ */
+export async function getPostLikes(postUri, limit = 50, cursor) {
+  if (!agent.hasSession) throw new Error('No active session. Please login first.');
+  if (!postUri) throw new Error('Post URI is required to get likes.');
+
+  console.log(`[ATProto Posts API] Getting likes for post: ${postUri}`);
+  try {
+    const response = await agent.getLikes({ uri: postUri, limit, cursor });
+    if (response.success && response.data.likes) {
+      const pdsHostname = new URL(agent.service.toString()).hostname; // For constructing acct
+      const users = response.data.likes.map(like => transformProfileViewBasicToEnaforeAccount(like.actor, pdsHostname)).filter(Boolean);
+      console.log(`[ATProto Posts API] Fetched ${users.length} likers for ${postUri}. Cursor: ${response.data.cursor}`);
+      return { users, cursor: response.data.cursor };
+    } else {
+      console.error(`[ATProto Posts API] Failed to get likes for ${postUri}: No likes data in response.`);
+      throw new Error('Failed to get likes: No likes data returned.');
+    }
+  } catch (error) {
+    console.error(`[ATProto Posts API] Error getting likes for ${postUri}:`, error.name, error.message, error);
+    let message = `Failed to get likes: ${error.message || 'Unknown error'}.`;
+    if (error.name === 'XRPCError') {
+       if (error.status === 404) message = 'Post not found.';
+       else if (error.status === 401) message = 'Authentication required.';
+       else message = `Get likes error: ${error.message || 'Server error'}. (Status: ${error.status})`;
+    }
+    throw new Error(message);
+  }
+}
+
+/**
+ * Fetches a list of users who reposted a post.
+ * @async
+ * @param {string} postUri - The AT URI of the post.
+ * @param {number} [limit=50] - Max number of users to fetch.
+ * @param {string} [cursor] - Cursor for pagination.
+ * @returns {Promise<{users: Array<object>, cursor: string|undefined}>}
+ *          List of transformed Enafore account objects and the next cursor.
+ * @throws {Error} If fetching fails.
+ */
+export async function getPostReposters(postUri, limit = 50, cursor) {
+  if (!agent.hasSession) throw new Error('No active session. Please login first.');
+  if (!postUri) throw new Error('Post URI is required to get reposters.');
+
+  console.log(`[ATProto Posts API] Getting reposters for post: ${postUri}`);
+  try {
+    const response = await agent.getRepostedBy({ uri: postUri, limit, cursor });
+    if (response.success && response.data.repostedBy) {
+      const pdsHostname = new URL(agent.service.toString()).hostname;
+      const users = response.data.repostedBy.map(actor => transformProfileViewBasicToEnaforeAccount(actor, pdsHostname)).filter(Boolean);
+      console.log(`[ATProto Posts API] Fetched ${users.length} reposters for ${postUri}. Cursor: ${response.data.cursor}`);
+      return { users, cursor: response.data.cursor };
+    } else {
+      console.error(`[ATProto Posts API] Failed to get reposters for ${postUri}: No repostedBy data in response.`);
+      throw new Error('Failed to get reposters: No repostedBy data returned.');
+    }
+  } catch (error) {
+    console.error(`[ATProto Posts API] Error getting reposters for ${postUri}:`, error.name, error.message, error);
+    let message = `Failed to get reposters: ${error.message || 'Unknown error'}.`;
+     if (error.name === 'XRPCError') {
+       if (error.status === 404) message = 'Post not found.';
+       else if (error.status === 401) message = 'Authentication required.';
+       else message = `Get reposters error: ${error.message || 'Server error'}. (Status: ${error.status})`;
+    }
+    throw new Error(message);
+  }
+}
+
+/**
+ * Fetches a post thread from the network.
+ * @async
+ * @param {string} postUri - The URI of the post for which to fetch the thread.
+ * @param {number} [depth=6] - Maximum depth of parent posts to fetch.
+ * @param {number} [parentHeight=80] - Max number of ancestors to fetch. (Note: bsky SDK uses parentHeight, not depth for ancestors)
+ * @returns {Promise<object|null>} The transformed PostView object for the root of the thread, with .parent and .replies populated, or null on error.
+ *                                 The structure will be nested PostView objects.
+ * @throws {Error} If fetching fails.
+ */
+export async function getNetworkPostThread(postUri, depth, parentHeight) {
+  if (!agent.hasSession) throw new Error('No active session. Please login first.'); // Or allow for anon if AppView supports
+  if (!postUri) throw new Error('Post URI is required to fetch a thread.');
+
+  console.log(`[ATProto Posts API] Fetching network thread for post: ${postUri}, depth: ${depth}, parentHeight: ${parentHeight}`);
+  try {
+    const response = await agent.getPostThread({ uri: postUri, depth, parentHeight });
+    if (response.success && response.data.thread) {
+      console.log(`[ATProto Posts API] Successfully fetched thread for ${postUri}.`);
+      // The response.data.thread is a PostView. It needs to be transformed.
+      // This transformation needs to be recursive for parents and replies.
+      // For now, we return the raw thread data from API, transformation will be complex.
+      // TODO: Implement recursive transformation of the thread PostView structure.
+      // For now, actions/UI will receive the direct agent.getPostThread response structure.
+      return response.data.thread;
+    } else {
+      console.error(`[ATProto Posts API] Failed to fetch thread for ${postUri}, success false or no thread data.`);
+      throw new Error('Failed to fetch thread: No thread data returned.');
+    }
+  } catch (error) {
+    console.error(`[ATProto Posts API] Error fetching network thread for ${postUri}:`, error.name, error.message, error);
+    let message = `Failed to fetch thread: ${error.message || 'Unknown error'}.`;
+    if (error.name === 'XRPCError') {
+      if (error.status === 404 || (error.message && error.message.toLowerCase().includes('post not found'))) {
+        message = 'Post not found.';
+      } else if (error.status === 401 || error.error === 'AuthenticationRequired') {
+        message = 'Authentication required to view this thread.';
+      } else if (error.status >= 500) {
+        message = 'The server encountered an error fetching the thread. Please try again later.';
+      } else {
+        message = `Fetch thread error: ${error.message || 'Unknown server error'}. (Status: ${error.status})`;
+      }
+    }
+    throw new Error(message);
+  }
+}
