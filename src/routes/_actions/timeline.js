@@ -19,6 +19,12 @@ import li from 'li'
 import { setMultipleAtprotoPosts } from '../_database/atprotoPosts.js'
 import { setAtprotoFeedTimeline } from '../_database/atprotoFeeds.js'
 
+// Define atprotoFeedMap at module scope for consistency
+const ATPROTO_FEED_MAP = {
+  'home': undefined, // Handled by getAtprotoTimeline as default "Following" feed
+  'federated': 'at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/whats-hot', // Bluesky "Discover"
+  // 'notifications': specific_notifications_handler, // Placeholder for future - handled by notification mixins
+};
 
 async function storeFreshTimelineItemsInDatabase (instanceName, timelineName, items, currentAccountProtocol) {
   console.log(`[Timeline Action] storeFreshTimelineItemsInDatabase for ${instanceName}, timeline: ${timelineName}, protocol: ${currentAccountProtocol}, items: ${items.length}`)
@@ -132,14 +138,6 @@ async function fetchTimelineItemsFromNetwork (instanceName, accessToken, timelin
   } else { // normal timeline
     if (currentAccountProtocol === 'atproto') {
       console.log(`[Timeline Action] Fetching ATProto timeline. Enafore timeline: ${timelineName}`)
-      // For ATProto, lastTimelineItemId is the cursor.
-      // timelineName could be 'home', 'discover', or a feed URI (at://...)
-
-      const atprotoFeedMap = {
-        'home': undefined, // Handled by getAtprotoTimeline as default "Following" feed
-        'federated': 'at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/whats-hot', // Bluesky "Discover"
-        // 'notifications': specific_notifications_handler, // Placeholder for future
-      };
 
       let atprotoAlgorithmOrActor;
       let atprotoFeedIdentifier; // For DB key for cursor storage
@@ -149,8 +147,8 @@ async function fetchTimelineItemsFromNetwork (instanceName, accessToken, timelin
         atprotoAlgorithmOrActor = accountId;
         atprotoFeedIdentifier = `actor_feed:${accountId}`;
         console.log(`[Timeline Action] Mapped Enafore 'account/${accountId}' to ATProto actor feed: ${atprotoAlgorithmOrActor}`);
-      } else if (atprotoFeedMap.hasOwnProperty(timelineName)) {
-        atprotoAlgorithmOrActor = atprotoFeedMap[timelineName];
+      } else if (ATPROTO_FEED_MAP.hasOwnProperty(timelineName)) { // Use module-scoped map
+        atprotoAlgorithmOrActor = ATPROTO_FEED_MAP[timelineName];
         atprotoFeedIdentifier = atprotoAlgorithmOrActor || 'home_following'; // Use special key for home
         console.log(`[Timeline Action] Mapped Enafore timeline '${timelineName}' to ATProto algorithm/feed: ${atprotoAlgorithmOrActor} (DB key: ${atprotoFeedIdentifier})`);
       } else if (timelineName.startsWith('at://')) {
@@ -230,10 +228,6 @@ async function fetchPagedItems (instanceName, accessToken, timelineName) {
   if (currentAccountProtocol === 'atproto') {
     console.log(`[Timeline Action] Paging ATProto timeline: ${timelineName}`)
 
-    const atprotoFeedMap = {
-      'home': undefined,
-      'federated': 'at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/whats-hot',
-    };
     let atprotoAlgorithmOrActor;
     let atprotoFeedIdentifier; // For DB key for cursor storage
 
@@ -242,8 +236,8 @@ async function fetchPagedItems (instanceName, accessToken, timelineName) {
       atprotoAlgorithmOrActor = accountId;
       atprotoFeedIdentifier = `actor_feed:${accountId}`;
       console.log(`[Timeline Action] Paging ATProto actor feed: ${atprotoAlgorithmOrActor}`);
-    } else if (atprotoFeedMap.hasOwnProperty(timelineName)) {
-      atprotoAlgorithmOrActor = atprotoFeedMap[timelineName];
+    } else if (ATPROTO_FEED_MAP.hasOwnProperty(timelineName)) { // Use module-scoped map
+      atprotoAlgorithmOrActor = ATPROTO_FEED_MAP[timelineName];
       atprotoFeedIdentifier = atprotoAlgorithmOrActor || 'home_following';
       console.log(`[Timeline Action] Paging mapped Enafore timeline '${timelineName}' to ATProto algorithm/feed: ${atprotoAlgorithmOrActor} (DB key: ${atprotoFeedIdentifier})`);
     } else if (timelineName.startsWith('at://')) {
