@@ -236,7 +236,88 @@ export function atprotoMixins (Store) {
       _session: session,
       _profile: userProfile || null
     }
-    console.log(`[Store Mixin] getCurrentAtprotoUser returning for DID ${did}:`, userProfile)
+    console.log(`[Store Mixin] getCurrentAtprotoUser returning for DID ${did}:`, userForUI) // Changed log to userForUI
     return userForUI
+  }
+
+  Store.prototype.fetchAtprotoNotifications = async function (limit = 30, cursor = null) {
+    const currentDid = this.get().currentAtprotoSessionDid
+    if (!currentDid || !this.get().isAtprotoSessionActive) {
+      console.warn('[Store Mixin] fetchAtprotoNotifications: No active ATProto session.')
+      this.set({ atprotoNotificationsLoading: false, atprotoNotificationsError: 'Not logged in.' })
+      return
+    }
+
+    const pdsHostname = new URL(getAgentPdsUrl()).hostname
+    const currentCursor = cursor || this.get().atprotoNotificationsCursor // Use passed cursor or stored one
+
+    console.log(`[Store Mixin] fetchAtprotoNotifications called. DID: ${currentDid}, Limit: ${limit}, Cursor: ${currentCursor}`)
+    this.set({ atprotoNotificationsLoading: true, atprotoNotificationsError: null })
+
+    try {
+      const { notifications: fetchedNotifications, cursor: newCursor } = await atprotoAPI.listNotifications(limit, currentCursor)
+
+      // Save to DB
+      await setAtprotoNotifications(pdsHostname, fetchedNotifications) // We don't pass cursor here, cursor is for the feed.
+                                                                      // setAtprotoNotifications itself could call setAtprotoFeedCursor if needed.
+      // For now, let's manage the MAIN_NOTIFICATIONS_FEED_ID cursor separately via atprotoFeeds.js if needed
+      // Or, more simply, listNotifications is the source of truth for the "timeline" of notifications.
+      // The DB storage of notifications is primarily for individual lookup and perhaps offline cache.
+      // The `ATPROTO_NOTIFICATION_TIMELINES_STORE` is for ordering.
+
+      // Update store state
+      const existingNotifications = cursor ? this.get().atprotoNotifications : [] // If cursor, append. Else, replace.
+      const allNotifications = [...existingNotifications, ...fetchedNotifications]
+      // Simple de-duplication by notification URI (id)
+      const uniqueNotifications = Array.from(new Map(allNotifications.map(n => [n.id, n])).values())
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()) // Sort newest first
+
+      this.set({
+        atprotoNotifications: uniqueNotifications,
+        atprotoNotificationsCursor: newCursor || null, // Store the new cursor
+        atprotoNotificationsLoading: false,
+      })
+
+      // Optionally, update unread count after fetching
+      // await this.updateAtprotoUnreadCount(); // This might trigger another fetch, be careful.
+      // Or, if listNotifications also implies "read up to this point", update seen.
+      // For now, unread count is separate.
+
+      console.log(`[Store Mixin] Fetched ${fetchedNotifications.length} ATProto notifications. New cursor: ${newCursor}. Total in store: ${uniqueNotifications.length}`)
+    } catch (err) {
+      console.error('[Store Mixin] fetchAtprotoNotifications error:', err.message, err)
+      this.set({ atprotoNotificationsLoading: false, atprotoNotificationsError: err.message })
+    }
+  }
+
+  Store.prototype.updateAtprotoUnreadCount = async function () {
+    if (!this.get().isAtprotoSessionActive) return
+    console.log('[Store Mixin] updateAtprotoUnreadCount called.')
+    try {
+      const count = await atprotoAPI.countUnreadNotifications()
+      this.set({ atprotoUnreadNotificationCount: count })
+      console.log(`[Store Mixin] ATProto unread notification count updated: ${count}`)
+    } catch (err) {
+      console.error('[Store Mixin] updateAtprotoUnreadCount error:', err.message, err)
+      // Don't set global error for a background count update usually
+    }
+  }
+
+  Store.prototype.markAtprotoNotificationsSeen = async function (seenAt = null) {
+    if (!this.get().isAtprotoSessionActive) return
+    console.log(`[Store Mixin] markAtprotoNotificationsSeen called. SeenAt: ${seenAt}`)
+    this.set({ atprotoNotificationsLoading: true }) // Indicate activity
+    try {
+      await atprotoAPI.updateSeenNotifications(seenAt) // API call
+      this.set({
+        atprotoUnreadNotificationCount: 0, // Optimistically set unread count to 0
+        atprotoNotificationsLoading: false
+      })
+      console.log('[Store Mixin] Marked ATProto notifications as seen.')
+      // Optionally, re-fetch notifications or count to confirm, but often not needed immediately.
+    } catch (err) {
+      console.error('[Store Mixin] markAtprotoNotificationsSeen error:', err.message, err)
+      this.set({ atprotoNotificationsLoading: false, atprotoNotificationsError: err.message })
+    }
   }
 }

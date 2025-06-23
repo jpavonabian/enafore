@@ -20,7 +20,8 @@ export const DB_VERSION_SNOWFLAKE_IDS = 12 // 11 skipped because of mistake depl
 export const DB_VERSION_ATPROTO_STORES = 13 // New version for adding ATProto stores
 
 // Using an object for these so that unit tests can change them
-export const DB_VERSION_CURRENT = { version: 13 } // Update to new current version
+export const DB_VERSION_ATPROTO_NOTIFICATION_STORES = 14 // New version for ATProto notification stores
+export const DB_VERSION_CURRENT = { version: 14 } // Update to new current version
 export const CURRENT_TIME = { now: () => Date.now() }
 
 // ATProto Stores
@@ -28,6 +29,9 @@ export const ATPROTO_ACCOUNTS_STORE = 'atproto_accounts-v1'
 export const ATPROTO_POSTS_STORE = 'atproto_posts-v1'
 export const ATPROTO_TIMELINES_STORE = 'atproto_timelines-v1'
 export const ATPROTO_FEED_CURSORS_STORE = 'atproto_feed_cursors-v1'
+export const ATPROTO_NOTIFICATIONS_STORE = 'atproto_notifications-v1'
+export const ATPROTO_NOTIFICATION_TIMELINES_STORE = 'atproto_notification_timelines-v1'
+
 
 // ATProto Indexes (example, actual names might be properties of records)
 export const ATPROTO_HANDLE_INDEX = 'handle'

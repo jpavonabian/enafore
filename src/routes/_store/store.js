@@ -96,6 +96,11 @@ const nonPersistedState = {
   currentAtprotoAgentState: null, // Could store agent readiness or errors
   isAtprotoSessionActive: false, // Derived, but useful to have explicitly
   currentAccountProtocol: null, // 'activitypub' or 'atproto'
+  atprotoNotifications: [], // Array of transformed notification objects for the current view
+  atprotoUnreadNotificationCount: 0,
+  atprotoNotificationsLoading: false,
+  atprotoNotificationsError: null,
+  atprotoNotificationsCursor: null, // Stores the cursor for fetching more notifications
 }
 
 const state = Object.assign({}, persistedState, nonPersistedState)

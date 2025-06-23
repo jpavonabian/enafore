@@ -20,7 +20,11 @@ import {
   ATPROTO_REPLY_ROOT_URI_INDEX,
   ATPROTO_REPLY_PARENT_URI_INDEX,
   ATPROTO_FEED_URI_INDEX,
-  DB_VERSION_ATPROTO_STORES
+  DB_VERSION_ATPROTO_STORES,
+  // Notification stores for ATProto
+  ATPROTO_NOTIFICATIONS_STORE,
+  ATPROTO_NOTIFICATION_TIMELINES_STORE,
+  DB_VERSION_ATPROTO_NOTIFICATION_STORES
 } from './constants.js'
 import { toReversePaddedBigInt } from '../_utils/statusIdSorting.js'
 
@@ -168,5 +172,45 @@ export const migrations = [
   {
     version: DB_VERSION_ATPROTO_STORES,
     migration: atprotoStoresMigration
+  },
+  {
+    version: DB_VERSION_ATPROTO_NOTIFICATION_STORES,
+    migration: atprotoNotificationStoresMigration
   }
 ]
+
+// Helper function (can be kept local or moved to a common place if used by other migrations too)
+function createObjectStoreHelper (db, name, init, indexes) {
+  const store = init
+    ? db.createObjectStore(name, init)
+    : db.createObjectStore(name)
+  if (indexes) {
+    Object.keys(indexes).forEach(indexKey => {
+      store.createIndex(indexKey, indexes[indexKey], { unique: false })
+    })
+  }
+}
+
+
+function atprotoNotificationStoresMigration (db, tx, done) {
+  // ATPROTO_NOTIFICATIONS_STORE
+  // Stores transformed notification objects.
+  // Keyed by notification URI.
+  createObjectStoreHelper(db, ATPROTO_NOTIFICATIONS_STORE, { keyPath: 'id' }, { // 'id' will be the notification URI
+    [ATPROTO_CREATED_AT_INDEX]: 'createdAt', // 'createdAt' is 'indexedAt' from ATProto notification
+    // Add other indexes as needed, e.g., by notification type or if reasonSubject is stored and indexed.
+    // 'type': 'type' // if 'type' (reason) is indexed
+  })
+
+  // ATPROTO_NOTIFICATION_TIMELINES_STORE
+  // Similar to ATPROTO_TIMELINES_STORE, this will store ordered notification URIs for a "notifications" feed.
+  // Key: "notifications_feed" + '\u0000' + sortableKey (e.g., timestamp + notificationUri)
+  // Value: notificationUri
+  // The "feedUri" concept here is just a fixed string like "notifications_all" or "notifications_unread"
+  createObjectStoreHelper(db, ATPROTO_NOTIFICATION_TIMELINES_STORE, null, {
+    // No specific indexes defined here yet for the timeline itself.
+    // Queries will be by key prefix (e.g., "notifications_all").
+  })
+
+  done()
+}

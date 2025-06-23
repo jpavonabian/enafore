@@ -6,16 +6,16 @@ import {නේ } from '../_utils/ajax.js' // Not strictly needed here, but good 
  * @param {object} postDetails
  * @param {string} postDetails.text - The text content of the post.
  * @param {Array<object>} [postDetails.facets] - Rich text facets (mentions, links, tags).
- * @param {Array<object>} [postDetails.embeds] - Embeds (images, external links, quote posts).
- *                                             Example image embed: { $type: 'app.bsky.embed.images', images: [{ image: blobRef, alt: 'alt text' }] }
+ * @param {object} [postDetails.embed] - A single top-level embed object (e.g., for images, external link, quote post).
+ *                                        Example image embed: { $type: 'app.bsky.embed.images', images: [{ image: blobRef, alt: 'alt text' }] }
  * @param {string} [postDetails.replyToUri] - AT URI of the post being replied to (for root).
  * @param {string} [postDetails.replyToCid] - CID of the post being replied to (for parent).
  * @param {Array<string>} [postDetails.langs] - Language codes (e.g., ['en', 'ja']).
  * @returns {Promise<object>} Object containing `uri` and `cid` of the new post.
  */
-export async function createPost ({ text, facets, embeds, replyToUri, replyToCid, langs }) {
+export async function createPost ({ text, facets, embed, replyToUri, replyToCid, langs }) { // Changed 'embeds' to 'embed'
   if (!agent.hasSession) throw new Error('No active session. Please login first.')
-  console.log('[ATProto Posts API] Creating post:', { text, embeds, replyToUri })
+  console.log('[ATProto Posts API] Creating post:', { text, embed, replyToUri })
 
   const postRecord = {
     $type: 'app.bsky.feed.post',
@@ -31,13 +31,8 @@ export async function createPost ({ text, facets, embeds, replyToUri, replyToCid
     postRecord.facets = facets
   }
 
-  if (embeds && embeds.length > 0) {
-    // Assuming embeds are already in the correct atproto format
-    // e.g., for images: { $type: 'app.bsky.embed.images', images: [{ image: BlobRef, alt: '' }] }
-    // e.g., for quote: { $type: 'app.bsky.embed.record', record: { cid: '...', uri: '...' } }
-    postRecord.embed = embeds.length === 1 ? embeds[0] : { $type: 'app.bsky.embed.images', images: embeds }; // Simplified: assumes multiple embeds are images
-    // A more robust solution would check $type of each embed or expect a single top-level embed object.
-    // For multiple images, the embed should be a single app.bsky.embed.images object containing an array of images.
+  if (embed) { // Changed from 'embeds && embeds.length > 0'
+    postRecord.embed = embed;
   }
 
   if (replyToUri && replyToCid) {
@@ -240,3 +235,60 @@ export async function deletePost (postUri) {
 //   `{ index: { byteStart, byteEnd }, features: [{ $type: 'app.bsky.richtext.facet#mention', did: '...' }] }`
 //   `{ index: { byteStart, byteEnd }, features: [{ $type: 'app.bsky.richtext.facet#link', uri: '...' }] }`
 //   `{ index: { byteStart, byteEnd }, features: [{ $type: 'app.bsky.richtext.facet#tag', tag: '...' }] }`
+
+
+/**
+ * Uploads an image and returns the embed object for a post.
+ * @param {File} file - The image file object.
+ * @param {string} [altText=''] - Alt text for the image.
+ * @returns {Promise<object|null>} The image embed object or null if upload fails.
+ * Example embed: { $type: 'app.bsky.embed.images', images: [{ image: blobRef, alt: 'alt text' }] }
+ */
+export async function uploadImageAndGetEmbed(file, altText = '') {
+  if (!agent.hasSession) throw new Error('No active session. Please login first.');
+  if (!file) {
+    console.error('[ATProto Posts API] No file provided for upload.');
+    return null;
+  }
+
+  console.log(`[ATProto Posts API] Uploading image: ${file.name}, type: ${file.type}, size: ${file.size}`);
+
+  try {
+    // Convert file to Uint8Array
+    const buffer = await file.arrayBuffer();
+    const uint8Array = new Uint8Array(buffer);
+
+    const response = await agent.uploadBlob(uint8Array, {
+      encoding: file.type || 'application/octet-stream'
+    });
+
+    if (response.success && response.data.blob) {
+      console.log('[ATProto Posts API] Image uploaded successfully:', response.data.blob);
+      return {
+        image: response.data.blob, // This is the BlobRef { cid, mimeType, size, $type: 'blob', ref: { $link: ... } }
+        alt: altText
+      };
+    } else {
+      console.error('[ATProto Posts API] Image upload failed, response did not indicate success or blob missing:', response);
+      throw new Error('Image upload failed: No blob data returned.');
+    }
+  } catch (error) {
+    console.error(`[ATProto Posts API] Error uploading image ${file.name}:`, error.name, error.message, error);
+    let message = `Failed to upload image: ${error.message || 'Unknown error'}.`;
+    if (error.name === 'XRPCError') {
+      if (error.status === 401 || error.error === 'AuthenticationRequired' || error.error === 'ExpiredToken') {
+        message = 'Your session has expired. Please log in again to upload.';
+      } else if (error.status === 413) { // Payload too large
+        message = 'Image file is too large to upload.';
+      } else if (error.status >= 500) {
+        message = 'The server encountered an error during upload. Please try again later.';
+      } else {
+        message = `Image upload error: ${error.message || 'Unknown server error'}. (Status: ${error.status})`;
+      }
+    }
+    // Do not re-throw here, instead return null or an error object so compose action can decide how to proceed.
+    // For now, to keep it simple for the caller, throw a user-friendly message.
+    // A better pattern might be to return { success: false, error: message }
+    throw new Error(message);
+  }
+}
