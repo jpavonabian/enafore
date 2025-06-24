@@ -14,60 +14,115 @@ function transformAtprotoPostToEnaforeStatus (feedViewPost) {
     console.warn('[ATProto Transform] Invalid feedViewPost object received, missing post or author:', feedViewPost);
     return null;
   }
-  const { post, reply, reason } = feedViewPost
+  const { post, reply, reason } = feedViewPost;
+  const session = getActiveSessionData(); // For checking current user interactions
 
-  // Basic structure from post author and record
+  if (reason && reason.$type === 'app.bsky.feed.defs#reasonRepost') {
+    // This item represents the REPOST ACTION.
+    // `post` is the original post that was reposted.
+    // `reason.by` is the reposter.
+    // `reason.indexedAt` is the timestamp of the repost.
+
+    const originalPostTransformed = transformAtprotoPostToEnaforeStatus({
+      post: post, // The original post
+      reply: post.reply, // Pass original post's reply context for the nested object
+      reason: null // No reason for the nested original post
+    });
+
+    if (!originalPostTransformed) { // Should not happen if post is valid
+        console.warn('[ATProto Transform] Failed to transform original post within a repost view:', feedViewPost);
+        return null;
+    }
+
+    const reposterAccount = transformProfileViewBasicToEnaforeAccount(reason.by, null); // PDS for reposter acct might be unknown here
+
+    // Construct a synthetic ID for this repost action in the timeline
+    const syntheticRepostId = `repost:${reason.by.did}:${post.uri}`;
+
+    return {
+      id: syntheticRepostId,
+      uri: syntheticRepostId, // Or link to original post: post.uri
+      url: originalPostTransformed.url, // Link to the original post's web view
+      content: '', // Repost action itself has no content
+      plainTextContent: '',
+      createdAt: reason.indexedAt, // Timestamp of the repost action
+      editedAt: null,
+      account: reposterAccount, // The user who reposted
+      reblog: originalPostTransformed, // The original post is nested here
+      reblogged_by: null, // Not applicable for the wrapper itself
+
+      visibility: 'public', // Reposts are public
+      sensitive: originalPostTransformed.sensitive, // Inherit sensitivity from original post
+      spoilerText: originalPostTransformed.spoiler_text, // Inherit spoiler from original
+
+      mediaAttachments: [], card: null, poll: null, quote: null, // No direct media/card/poll/quote on the repost action
+      mentions: [], tags: [], emojis: [],
+      application: reposterAccount?.application || { name: 'Unknown (via atproto)' }, // Could try to find reposting app if available later
+      language: null, // Repost action has no language
+
+      inReplyToId: null, // Repost is not a reply
+      inReplyToAccountId: null,
+      replyParentUri: null,
+      replyRootUri: null,
+
+      replyCount: 0, // Counts are for the repost action itself
+      repostCount: 0,
+      likeCount: 0,  // Cannot like/repost a repost action itself in ATProto
+
+      favourited: false,
+      reblogged: reason.by.did === session?.did, // Is this *my* repost of the original?
+      myLikeUri: undefined,
+      myRepostUri: (reason.by.did === session?.did) ? post.viewer?.repost : undefined, // URI of *my* repost record of original post
+                                                                                    // This assumes post.viewer.repost is for *this current user's* repost.
+                                                                                    // If reason.by is me, then this specific FeedViewPost *is* my repost.
+                                                                                    // The actual URI of *this* repost record isn't directly in FeedViewPost.reason.
+                                                                                    // This field is primarily for UI to know if it can "un-repost".
+      client_isBookmarked: false,
+      mutedConversation: false,
+      pinned: false,
+      localOnly: false,
+      protocol: 'atproto',
+      cid: null, // Repost action itself doesn't have a distinct CID in this view
+      indexedAt: reason.indexedAt,
+      viewer: null, // Viewer state for the repost action itself isn't a thing
+      _raw: feedViewPost, // Keep the raw reason for context if needed
+    };
+  }
+
+  // If not a repost, proceed with transforming the post itself:
   const enoStatus = {
-    id: post.uri, // AT URI is a good unique ID
+    id: post.uri,
     uri: post.uri,
-    content: post.record?.text || '', // Text content
+    content: post.record?.text || '',
     createdAt: post.record?.createdAt,
-    author: {
-      id: post.author.did, // Use DID as a stable ID
-      did: post.author.did,
-      handle: post.author.handle,
-      displayName: post.author.displayName || post.author.handle,
-      avatar: post.author.avatar || null, // Ensure null if undefined
-      // Enafore specific account fields might need defaults or be omitted
-      acct: post.author.handle, // Or format like handle@pds
-      username: post.author.handle,
-      url: `https://bsky.app/profile/${post.author.did}`, // Author's profile URL
-    },
-    url: `https://bsky.app/profile/${post.author.did}/post/${post.uri.split('/').pop()}`, // Post's web URL
+    author: transformProfileViewBasicToEnaforeAccount(post.author, null), // Use helper, PDS for acct might be unknown
+    url: `https://bsky.app/profile/${post.author.did}/post/${post.uri.split('/').pop()}`,
 
     replyCount: post.replyCount || 0,
     repostCount: post.repostCount || 0,
     likeCount: post.likeCount || 0,
     protocol: 'atproto',
-    cid: post.cid, // Content ID of the post record
-    indexedAt: post.indexedAt, // When the post was indexed by the AppView
+    cid: post.cid,
+    indexedAt: post.indexedAt,
     language: post.record?.langs && post.record.langs.length > 0 ? post.record.langs[0] : null,
 
-    // Viewer's interaction state with this specific post
     myLikeUri: post.viewer?.like,
     myRepostUri: post.viewer?.repost,
-    // Enafore's boolean flags based on viewer state
     favorited: !!post.viewer?.like,
     reblogged: !!post.viewer?.repost,
     // client_isBookmarked is a UI/store-level concern, derived from ATPROTO_BOOKMARKS_STORE, not set here.
-    // muted: !!post.viewer?.muted, // Raw muted state of the author by current user.
-                                 // Enafore's `mutedConversation` is for threads.
-                                 // Actor mutes are handled at profile level or by filtering.
     mutedConversation: false,
     pinned: false,
 
-    // Fields for DB indexes and threading
     replyParentUri: null,
     replyRootUri: null,
 
-    // Embeds (images, external links, other posts)
     media_attachments: [],
     card: null,
-    quote: null, // Renamed from quote_post for Enafore consistency
+    quote: null,
 
-    // Enafore specific fields with defaults or placeholders
     plainTextContent: post.record?.text || '',
-    editedAt: null, // ATProto posts are immutable
+    editedAt: null,
     visibility: 'public',
     application: { name: post.record?.via || 'Unknown (via atproto)' },
     mentions: [],
@@ -76,8 +131,9 @@ function transformAtprotoPostToEnaforeStatus (feedViewPost) {
     poll: null,
     spoiler_text: '',
     sensitive: false,
-    localOnly: false, // Not applicable to ATProto
-  }
+    localOnly: false,
+    _raw: feedViewPost // Keep the full FeedViewPost for _raw
+  };
 
   // Handle embeds (images, external links, quoted posts)
   if (post.embed) {
