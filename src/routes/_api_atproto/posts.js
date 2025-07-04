@@ -12,11 +12,12 @@ import agent from './agent.js'
  * @param {object} [postDetails.reply] - Optional reply object with `root` and `parent` properties,
  *                                       each having `uri` and `cid`.
  * @param {Array<string>} [postDetails.langs] - Language codes (e.g., ['en', 'ja']).
+ * @param {Array<object>} [postDetails.labels] - Self-labels for the post (e.g., for content warnings).
  * @returns {Promise<object>} Object containing `uri` and `cid` of the new post.
  */
-export async function createPost ({ text, facets, embed, reply, langs }) { // Removed replyToUri, replyToCid, added reply object
+export async function createPost ({ text, facets, embed, reply, langs, labels }) { // Added labels
   if (!agent.hasSession) throw new Error('No active session. Please login first.')
-  console.log('[ATProto Posts API] Creating post:', { text, embed, reply })
+  console.log('[ATProto Posts API] Creating post:', { text, embed, reply, langs, labels })
 
   const postRecord = {
     $type: 'app.bsky.feed.post',
@@ -38,6 +39,13 @@ export async function createPost ({ text, facets, embed, reply, langs }) { // Re
 
   if (reply && reply.root && reply.parent) { // Check for well-formed reply object
     postRecord.reply = reply;
+  }
+
+  if (labels && labels.length > 0) {
+    postRecord.labels = {
+      $type: 'com.atproto.label.defs#selfLabels',
+      values: labels // e.g. [{ val: '!warn' }, { val: 'sexual' }]
+    }
   }
 
   try {

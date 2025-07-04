@@ -126,8 +126,26 @@ export async function postStatus (realm, text, inReplyToId, mediaIds, // mediaId
       // TODO: Handle facets (mentions, links, tags) - UI needs to generate these and pass them.
       // TODO: Handle langs - UI could provide this and pass it.
 
+      // Add labels for content warnings/sensitive content
+      // `sensitive` is from the media properties (e.g. "Mark media as sensitive" toggle)
+      // `spoilerText` is the text entered in the CW field. In Enafore, this also implies contentWarningShown.
+      // `contentWarningShown` is true if the CW field is visible (even if spoilerText is empty).
+      const { contentWarningShown } = store.getComposeData(realm) // Get from store for current realm
+
+      if (sensitive || contentWarningShown || spoilerText) {
+        atpPostDetails.labels = atpPostDetails.labels || []
+        // Add a generic !warn label if any of these are true.
+        // More specific labels (e.g., 'sexual', 'nudity') could be added if Enafore had UI for them.
+        // Check to prevent duplicate !warn if already added by some other logic
+        if (!atpPostDetails.labels.some(l => l.val === '!warn')) {
+            atpPostDetails.labels.push({ val: '!warn' }) // Using com.atproto.label.defs#selfLabel format implicitly
+        }
+        console.log('[Action compose] ATProto: Adding !warn label due to sensitive/spoilerText flags.', { sensitive, contentWarningShown, spoilerText })
+      }
+
+
       const { uri: newPostUri, cid: newPostCid } = await atprotoPostsApi.createPost(atpPostDetails)
-      console.log(`[Action compose] ATProto post created: ${newPostUri}`)
+      console.log(`[Action compose] ATProto post created: ${newPostUri} with details:`, atpPostDetails)
 
       // After posting, ATProto doesn't return the full post object.
       // We need to either fetch it, or construct a partial one to add to timelines.

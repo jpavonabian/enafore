@@ -23,19 +23,43 @@
       </noscript>
 
       {#if !singleInstance}
-        <label for="instanceInput">{'intl.instanceColon'}</label>
-        <input type="text" inputmode="url" autocapitalize="none" spellcheck="false" id="instanceInput"
-              bind:value='$instanceNameInSearch' placeholder="{'intl.enterInstanceName'}" required
-        >
+        <fieldset class="form-fieldset">
+          <legend>{'intl.chooseProtocol' || 'Choose Protocol'}</legend>
+          <div>
+            <input type="radio" id="protocolActivityPub" name="protocol" value="activitypub" bind:group='protocolToAdd'>
+            <label for="protocolActivityPub">ActivityPub (Mastodon, etc.)</label>
+          </div>
+          <div>
+            <input type="radio" id="protocolAtproto" name="protocol" value="atproto" bind:group='protocolToAdd'>
+            <label for="protocolAtproto">ATProto (Bluesky)</label>
+          </div>
+        </fieldset>
+
+        {#if protocolToAdd === 'activitypub'}
+          <label for="instanceInput">{'intl.instanceColon'}</label>
+          <input type="text" inputmode="url" autocapitalize="none" spellcheck="false" id="instanceInput"
+                bind:value='$instanceNameInSearch' placeholder="{'intl.enterInstanceName'}" required={protocolToAdd === 'activitypub'}>
+        {:else if protocolToAdd === 'atproto'}
+          <label for="atprotoHandleInput">{'intl.atprotoHandleLabel' || 'Bluesky Handle (e.g., name.bsky.social)'}</label>
+          <input type="text" inputmode="url" autocapitalize="none" spellcheck="false" id="atprotoHandleInput"
+                bind:value='atprotoHandle' placeholder="{'intl.atprotoHandlePlaceholder' || 'yourname.bsky.social'}" required={protocolToAdd === 'atproto'}>
+
+          <label for="atprotoPasswordInput">{'intl.atprotoAppPasswordLabel' || 'App Password'}</label>
+          <input type="password" id="atprotoPasswordInput" bind:value='atprotoPassword' placeholder="{'intl.atprotoAppPasswordPlaceholder' || 'xxxx-xxxx-xxxx-xxxx'}" required={protocolToAdd === 'atproto'}>
+
+          <label for="atprotoPdsUrlInput">{'intl.atprotoPdsUrlLabel' || 'Bluesky Server (PDS URL - optional)'}</label>
+          <input type="text" inputmode="url" autocapitalize="none" spellcheck="false" id="atprotoPdsUrlInput"
+                bind:value='atprotoPdsUrl' placeholder="{'intl.atprotoPdsUrlPlaceholder' || 'https://bsky.social'}">
+        {/if}
       {/if}
       <button class="primary" type="submit" id="submitButton"
-              disabled={singleInstance ? $isUserLoggedIn : !instance || $logInToInstanceLoading}>
+              disabled={disableSubmitButton}>
         {'intl.logIn'}
       </button>
     </form>
   </div>
 
-  {#if !singleInstance && !$isUserLoggedIn}
+  {#if !singleInstance && !$isUserLoggedIn && protocolToAdd === 'activitypub'}
     <p>
       {'intl.getAnInstancePre'}
       <Tooltip
@@ -110,18 +134,61 @@
     data: () => ({
       hasIndexedDB: true,
       hasLocalStorage: true,
-      singleInstance: process.env.SINGLE_INSTANCE
+      singleInstance: process.env.SINGLE_INSTANCE,
+      protocolToAdd: 'activitypub', // Default protocol
+      atprotoHandle: '',
+      atprotoPassword: '',
+      atprotoPdsUrl: '',
+      // Placeholder intl strings - these should be added to actual intl files
+      'intl.chooseProtocol': 'Select Protocol',
+      'intl.atprotoHandleLabel': 'Bluesky Handle (e.g., name.bsky.social)',
+      'intl.atprotoHandlePlaceholder': 'yourname.bsky.social',
+      'intl.atprotoAppPasswordLabel': 'App Password',
+      'intl.atprotoAppPasswordPlaceholder': 'xxxx-xxxx-xxxx-xxxx',
+      'intl.atprotoPdsUrlLabel': 'Bluesky Server (PDS URL - optional)',
+      'intl.atprotoPdsUrlPlaceholder': 'https://bsky.social (default if blank)',
     }),
     computed: {
       pageLabel: ({ $isUserLoggedIn }) => $isUserLoggedIn ? 'intl.addInstance' : 'intl.logIn',
-      instance: ({ $instanceNameInSearch }) => process.env.SINGLE_INSTANCE || $instanceNameInSearch
+      // 'instance' computed property is used for disabling button; adapt for protocol
+      instance: ({ $instanceNameInSearch, protocolToAdd, atprotoHandle, atprotoPassword }) => {
+        if (process.env.SINGLE_INSTANCE) return process.env.SINGLE_INSTANCE;
+        if (protocolToAdd === 'atproto') {
+          return atprotoHandle && atprotoPassword; // Basic check for ATProto
+        }
+        return $instanceNameInSearch; // Existing check for AP
+      },
+      disableSubmitButton: ({ singleInstance, $isUserLoggedIn, instance, $logInToInstanceLoading, protocolToAdd, atprotoHandle, atprotoPassword, $instanceNameInSearch }) => {
+        if (singleInstance && $isUserLoggedIn) return true;
+        if ($logInToInstanceLoading) return true;
+        if (protocolToAdd === 'activitypub') {
+          return !($instanceNameInSearch && $instanceNameInSearch.trim());
+        } else if (protocolToAdd === 'atproto') {
+          return !(atprotoHandle && atprotoHandle.trim() && atprotoPassword && atprotoPassword.trim());
+        }
+        return true; // Should not happen if protocol is selected
+      }
     },
     methods: {
       onSubmitInstance (event) {
         event.preventDefault()
         event.stopPropagation()
+
+        const { protocolToAdd, atprotoHandle, atprotoPassword, atprotoPdsUrl } = this.get()
+        const { instanceNameInSearch } = this.store.get() // for AP
+
         if (process.env.SINGLE_INSTANCE) {
-          this.store.set({ instanceNameInSearch: process.env.SINGLE_INSTANCE })
+          // Assuming single instance mode is ActivityPub only for now
+          this.store.set({ instanceNameInSearch: process.env.SINGLE_INSTANCE, instanceTypeToAdd: 'activitypub' })
+        } else {
+          this.store.set({
+            instanceTypeToAdd: protocolToAdd,
+            // For AP, instanceNameInSearch is already bound from input
+            // For ATProto, need to pass handle as identifier, and other details
+            instanceNameInSearch: protocolToAdd === 'atproto' ? atprotoHandle : instanceNameInSearch,
+            atprotoPassword: protocolToAdd === 'atproto' ? atprotoPassword : '', // Clear if not ATProto
+            atprotoPdsUrl: protocolToAdd === 'atproto' ? (atprotoPdsUrl || 'https://bsky.social') : '' // Default PDS, clear if not ATProto
+          })
         }
         logInToInstance()
       }

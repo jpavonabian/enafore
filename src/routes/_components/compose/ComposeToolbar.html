@@ -14,6 +14,7 @@
       on:click="onMediaClick()"
       disabled={$uploadingMedia || (media.length === $maxStatusMediaAttachments)}
     />
+    {#if $currentAccountProtocol !== 'atproto'}
     <IconButton
       className="compose-toolbar-button"
       label="{'intl.addPoll'}"
@@ -23,19 +24,21 @@
       pressable={true}
       pressed={poll && poll.options && poll.options.length}
     />
-    <IconButton
-      className="compose-toolbar-button"
-      label={postPrivacyLabel}
-      href={actualPostPrivacy.icon}
-      on:click="onPostPrivacyClick()"
-      disabled={!!editId}
-    />
-    <IconButton
-      className="compose-toolbar-button"
-      label={contentTypeLabel}
-      href={contentTypeIcon}
-      on:click="onContentTypeClick()"
-    />
+    {#if $currentAccountProtocol !== 'atproto'}
+      <IconButton
+        className="compose-toolbar-button"
+        label={postPrivacyLabel}
+        href={actualPostPrivacy.icon}
+        on:click="onPostPrivacyClick()"
+        disabled={!!editId}
+      />
+      <IconButton
+        className="compose-toolbar-button"
+        label={contentTypeLabel}
+        href={contentTypeIcon}
+        on:click="onContentTypeClick()"
+      />
+    {/if}
     <IconButton
       className="compose-toolbar-button"
       label="{'intl.addContentWarning'}"
