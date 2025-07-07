@@ -128,4 +128,8 @@ observers(store)
 
 if (ENAFORE_IS_BROWSER) {
   window.__store = store // for debugging
+  // Attempt to resume any persisted ATProto session on startup
+  store.atprotoResumeSession().catch(err =>
+    console.error('ATProto resume session error:', err)
+  )
 }

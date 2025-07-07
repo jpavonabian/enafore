@@ -53,12 +53,26 @@ export function instanceComputations (store) {
 
   store.compute(
     'isUserLoggedIn',
-    ['currentInstance', 'loggedInInstances'],
-    (currentInstance, loggedInInstances) =>
-      !!(
+    [
+      'currentInstance',
+      'loggedInInstances',
+      'currentAccountProtocol',
+      'isAtprotoSessionActive'
+    ],
+    (
+      currentInstance,
+      loggedInInstances,
+      currentAccountProtocol,
+      isAtprotoSessionActive
+    ) => {
+      if (currentAccountProtocol === 'atproto') {
+        return !!(currentInstance && isAtprotoSessionActive)
+      }
+      return !!(
         currentInstance &&
         Object.keys(loggedInInstances).includes(currentInstance)
       )
+    }
   )
 
   store.compute(
