@@ -4,8 +4,6 @@ import { mixins } from './mixins/mixins.js'
 import { LocalStorageStore } from './LocalStorageStore.js'
 import { observe } from 'svelte-extras'
 import { isKaiOS } from '../_utils/userAgent/isKaiOS.js'
-import * as atprotoAPI from '../_api_atproto/auth.js' // ATProto auth functions
-import atprotoAgent from '../_api_atproto/agent.js' // ATProto agent
 
 const persistedState = {
   // ATProto specific persisted state
@@ -106,9 +104,9 @@ const nonPersistedState = {
   atprotoPostRepostersCache: {}, // Structure: { [postUri]: { users: [], cursor?: string, isLoading: false, error: null } }
   // ATProto Client-Side Bookmarks
   atprotoBookmarkedPostUris: null, // Set of bookmarked post URIs for quick lookups. Initialized from DB.
-  atprotoBookmarksList: [],      // Array of {postUri, bookmarkedAt, ?transformedPost} for UI display.
+  atprotoBookmarksList: [], // Array of {postUri, bookmarkedAt, ?transformedPost} for UI display.
   atprotoBookmarksLoading: false,
-  atprotoBookmarksError: null,
+  atprotoBookmarksError: null
 }
 
 const state = Object.assign({}, persistedState, nonPersistedState)

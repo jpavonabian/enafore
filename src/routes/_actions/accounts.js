@@ -3,7 +3,7 @@ import { getRelationship as getApRelationship } from '../_api/relationships.js'
 import atprotoAgent from '../_api_atproto/agent.js'
 import { database } from '../_database/database.js'
 import { store } from '../_store/store.js'
-import { transformProfileViewToEnaforeAccount } from '../_api_atproto/timelines.js' // Assuming a suitable transformer
+import { transformProfileViewToEnaforeAccount } from '../_api_atproto/posts.js'
 
 // Helper to determine if an ID is a DID (very basic check)
 function isDid (id) {
@@ -108,8 +108,8 @@ async function _updateRelationship (accountId, instanceName, accessToken) {
     } catch (e) {
       console.error(e)
     }
-    try {
-      store.set({ currentAccountRelationship: (await remotePromise) })
+  try {
+    store.set({ currentAccountRelationship: await remotePromise })
   } catch (e) {
     console.error(e)
   }
