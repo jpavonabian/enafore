@@ -21,8 +21,8 @@ export async function createPost ({ text, facets, embed, reply, langs, labels })
 
   const postRecord = {
     $type: 'app.bsky.feed.post',
-    text: text,
-    createdAt: new Date().toISOString(),
+    text,
+    createdAt: new Date().toISOString()
   }
 
   if (langs && langs.length > 0) {
@@ -34,11 +34,11 @@ export async function createPost ({ text, facets, embed, reply, langs, labels })
   }
 
   if (embed) {
-    postRecord.embed = embed;
+    postRecord.embed = embed
   }
 
   if (reply && reply.root && reply.parent) { // Check for well-formed reply object
-    postRecord.reply = reply;
+    postRecord.reply = reply
   }
 
   if (labels && labels.length > 0) {
@@ -66,12 +66,11 @@ export async function createPost ({ text, facets, embed, reply, langs, labels })
         message = `Post creation error: ${error.message || 'Unknown server error'}. (Status: ${error.status})`
       }
     } else if (error.message.includes('NetworkError') || error.message.includes('fetch failed')) {
-        message = 'Network error. Could not connect to the server to create post.'
+      message = 'Network error. Could not connect to the server to create post.'
     }
     throw new Error(message)
   }
 }
-
 
 /**
  * Likes a post.
@@ -238,7 +237,6 @@ export async function deletePost (postUri) {
 //   `{ index: { byteStart, byteEnd }, features: [{ $type: 'app.bsky.richtext.facet#link', uri: '...' }] }`
 //   `{ index: { byteStart, byteEnd }, features: [{ $type: 'app.bsky.richtext.facet#tag', tag: '...' }] }`
 
-
 /**
  * Uploads an image and returns an object suitable for an image item in an `app.bsky.embed.images` embed.
  * @async
@@ -247,52 +245,52 @@ export async function deletePost (postUri) {
  * @returns {Promise<object>} An object `{ image: BlobRef, alt: string }`.
  * @throws {Error} If upload fails (e.g., network error, auth error, server error, file too large).
  */
-export async function uploadImageAndGetEmbed(file, altText = '') {
-  if (!agent.hasSession) throw new Error('No active session. Please login first.');
+export async function uploadImageAndGetEmbed (file, altText = '') {
+  if (!agent.hasSession) throw new Error('No active session. Please login first.')
   if (!file) {
-    console.error('[ATProto Posts API] No file provided for upload.');
-    return null;
+    console.error('[ATProto Posts API] No file provided for upload.')
+    return null
   }
 
-  console.log(`[ATProto Posts API] Uploading image: ${file.name}, type: ${file.type}, size: ${file.size}`);
+  console.log(`[ATProto Posts API] Uploading image: ${file.name}, type: ${file.type}, size: ${file.size}`)
 
   try {
     // Convert file to Uint8Array
-    const buffer = await file.arrayBuffer();
-    const uint8Array = new Uint8Array(buffer);
+    const buffer = await file.arrayBuffer()
+    const uint8Array = new Uint8Array(buffer)
 
     const response = await agent.uploadBlob(uint8Array, {
       encoding: file.type || 'application/octet-stream'
-    });
+    })
 
     if (response.success && response.data.blob) {
-      console.log('[ATProto Posts API] Image uploaded successfully:', response.data.blob);
+      console.log('[ATProto Posts API] Image uploaded successfully:', response.data.blob)
       return {
         image: response.data.blob, // This is the BlobRef { cid, mimeType, size, $type: 'blob', ref: { $link: ... } }
         alt: altText
-      };
+      }
     } else {
-      console.error('[ATProto Posts API] Image upload failed, response did not indicate success or blob missing:', response);
-      throw new Error('Image upload failed: No blob data returned.');
+      console.error('[ATProto Posts API] Image upload failed, response did not indicate success or blob missing:', response)
+      throw new Error('Image upload failed: No blob data returned.')
     }
   } catch (error) {
-    console.error(`[ATProto Posts API] Error uploading image ${file.name}:`, error.name, error.message, error);
-    let message = `Failed to upload image: ${error.message || 'Unknown error'}.`;
+    console.error(`[ATProto Posts API] Error uploading image ${file.name}:`, error.name, error.message, error)
+    let message = `Failed to upload image: ${error.message || 'Unknown error'}.`
     if (error.name === 'XRPCError') {
       if (error.status === 401 || error.error === 'AuthenticationRequired' || error.error === 'ExpiredToken') {
-        message = 'Your session has expired. Please log in again to upload.';
+        message = 'Your session has expired. Please log in again to upload.'
       } else if (error.status === 413) { // Payload too large
-        message = 'Image file is too large to upload.';
+        message = 'Image file is too large to upload.'
       } else if (error.status >= 500) {
-        message = 'The server encountered an error during upload. Please try again later.';
+        message = 'The server encountered an error during upload. Please try again later.'
       } else {
-        message = `Image upload error: ${error.message || 'Unknown server error'}. (Status: ${error.status})`;
+        message = `Image upload error: ${error.message || 'Unknown server error'}. (Status: ${error.status})`
       }
     }
     // Do not re-throw here, instead return null or an error object so compose action can decide how to proceed.
     // For now, to keep it simple for the caller, throw a user-friendly message.
     // A better pattern might be to return { success: false, error: message }
-    throw new Error(message);
+    throw new Error(message)
   }
 }
 
@@ -302,13 +300,12 @@ export async function uploadImageAndGetEmbed(file, altText = '') {
  * @param {string} [pdsHostname] - Optional PDS hostname to construct full acct.
  * @returns {object} An Enafore-compatible account object.
  */
-function transformProfileViewBasicToEnaforeAccount(profileViewBasic, pdsHostname) {
+export function transformProfileViewBasicToEnaforeAccount (profileViewBasic, pdsHostname) {
   if (!profileViewBasic || !profileViewBasic.did || !profileViewBasic.handle) {
-    console.warn('[ATProto Transform] Invalid ProfileViewBasic object:', profileViewBasic);
-    return null;
+    console.warn('[ATProto Transform] Invalid ProfileViewBasic object:', profileViewBasic)
+    return null
   }
-  const accHostname = pdsHostname || (profileViewBasic.handle.includes('.') ? profileViewBasic.handle.substring(profileViewBasic.handle.indexOf('.') + 1) : 'unknown.pds');
-
+  const accHostname = pdsHostname || (profileViewBasic.handle.includes('.') ? profileViewBasic.handle.substring(profileViewBasic.handle.indexOf('.') + 1) : 'unknown.pds')
 
   return {
     id: profileViewBasic.did,
@@ -339,10 +336,33 @@ function transformProfileViewBasicToEnaforeAccount(profileViewBasic, pdsHostname
     emojis: [],
     moved: null,
     suspended: false,
-    _raw: profileViewBasic, // Keep raw for debugging or more detailed views
-  };
+    _raw: profileViewBasic // Keep raw for debugging or more detailed views
+  }
 }
 
+/**
+ * Transforms a full ATProto ProfileView (e.g. ProfileViewDetailed) into
+ * Enafore's account object format. Falls back to ProfileViewBasic transform
+ * and augments with additional fields when available.
+ * @param {object} profileView - The ProfileView object from ATProto.
+ * @param {string} [pdsHostname] - Optional PDS hostname for acct generation.
+ * @returns {object} Enafore-compatible account object.
+ */
+export function transformProfileViewToEnaforeAccount (profileView, pdsHostname) {
+  const base = transformProfileViewBasicToEnaforeAccount(profileView, pdsHostname)
+  if (!base) return null
+
+  return {
+    ...base,
+    note: profileView.description || base.note,
+    header: profileView.banner || base.header,
+    followersCount: profileView.followersCount ?? base.followersCount,
+    followingCount: profileView.followsCount ?? base.followingCount,
+    statusesCount: profileView.postsCount ?? base.statusesCount,
+    createdAt: profileView.createdAt || base.createdAt,
+    _raw: profileView
+  }
+}
 
 /**
  * Fetches a list of users who liked a post.
@@ -354,31 +374,31 @@ function transformProfileViewBasicToEnaforeAccount(profileViewBasic, pdsHostname
  *          List of transformed Enafore account objects and the next cursor.
  * @throws {Error} If fetching fails.
  */
-export async function getPostLikes(postUri, limit = 50, cursor) {
-  if (!agent.hasSession) throw new Error('No active session. Please login first.');
-  if (!postUri) throw new Error('Post URI is required to get likes.');
+export async function getPostLikes (postUri, limit = 50, cursor) {
+  if (!agent.hasSession) throw new Error('No active session. Please login first.')
+  if (!postUri) throw new Error('Post URI is required to get likes.')
 
-  console.log(`[ATProto Posts API] Getting likes for post: ${postUri}`);
+  console.log(`[ATProto Posts API] Getting likes for post: ${postUri}`)
   try {
-    const response = await agent.getLikes({ uri: postUri, limit, cursor });
+    const response = await agent.getLikes({ uri: postUri, limit, cursor })
     if (response.success && response.data.likes) {
-      const pdsHostname = new URL(agent.service.toString()).hostname; // For constructing acct
-      const users = response.data.likes.map(like => transformProfileViewBasicToEnaforeAccount(like.actor, pdsHostname)).filter(Boolean);
-      console.log(`[ATProto Posts API] Fetched ${users.length} likers for ${postUri}. Cursor: ${response.data.cursor}`);
-      return { users, cursor: response.data.cursor };
+      const pdsHostname = new URL(agent.service.toString()).hostname // For constructing acct
+      const users = response.data.likes.map(like => transformProfileViewBasicToEnaforeAccount(like.actor, pdsHostname)).filter(Boolean)
+      console.log(`[ATProto Posts API] Fetched ${users.length} likers for ${postUri}. Cursor: ${response.data.cursor}`)
+      return { users, cursor: response.data.cursor }
     } else {
-      console.error(`[ATProto Posts API] Failed to get likes for ${postUri}: No likes data in response.`);
-      throw new Error('Failed to get likes: No likes data returned.');
+      console.error(`[ATProto Posts API] Failed to get likes for ${postUri}: No likes data in response.`)
+      throw new Error('Failed to get likes: No likes data returned.')
     }
   } catch (error) {
-    console.error(`[ATProto Posts API] Error getting likes for ${postUri}:`, error.name, error.message, error);
-    let message = `Failed to get likes: ${error.message || 'Unknown error'}.`;
+    console.error(`[ATProto Posts API] Error getting likes for ${postUri}:`, error.name, error.message, error)
+    let message = `Failed to get likes: ${error.message || 'Unknown error'}.`
     if (error.name === 'XRPCError') {
-       if (error.status === 404) message = 'Post not found.';
-       else if (error.status === 401) message = 'Authentication required.';
-       else message = `Get likes error: ${error.message || 'Server error'}. (Status: ${error.status})`;
+      if (error.status === 404) message = 'Post not found.'
+      else if (error.status === 401) message = 'Authentication required.'
+      else message = `Get likes error: ${error.message || 'Server error'}. (Status: ${error.status})`
     }
-    throw new Error(message);
+    throw new Error(message)
   }
 }
 
@@ -392,31 +412,31 @@ export async function getPostLikes(postUri, limit = 50, cursor) {
  *          List of transformed Enafore account objects and the next cursor.
  * @throws {Error} If fetching fails.
  */
-export async function getPostReposters(postUri, limit = 50, cursor) {
-  if (!agent.hasSession) throw new Error('No active session. Please login first.');
-  if (!postUri) throw new Error('Post URI is required to get reposters.');
+export async function getPostReposters (postUri, limit = 50, cursor) {
+  if (!agent.hasSession) throw new Error('No active session. Please login first.')
+  if (!postUri) throw new Error('Post URI is required to get reposters.')
 
-  console.log(`[ATProto Posts API] Getting reposters for post: ${postUri}`);
+  console.log(`[ATProto Posts API] Getting reposters for post: ${postUri}`)
   try {
-    const response = await agent.getRepostedBy({ uri: postUri, limit, cursor });
+    const response = await agent.getRepostedBy({ uri: postUri, limit, cursor })
     if (response.success && response.data.repostedBy) {
-      const pdsHostname = new URL(agent.service.toString()).hostname;
-      const users = response.data.repostedBy.map(actor => transformProfileViewBasicToEnaforeAccount(actor, pdsHostname)).filter(Boolean);
-      console.log(`[ATProto Posts API] Fetched ${users.length} reposters for ${postUri}. Cursor: ${response.data.cursor}`);
-      return { users, cursor: response.data.cursor };
+      const pdsHostname = new URL(agent.service.toString()).hostname
+      const users = response.data.repostedBy.map(actor => transformProfileViewBasicToEnaforeAccount(actor, pdsHostname)).filter(Boolean)
+      console.log(`[ATProto Posts API] Fetched ${users.length} reposters for ${postUri}. Cursor: ${response.data.cursor}`)
+      return { users, cursor: response.data.cursor }
     } else {
-      console.error(`[ATProto Posts API] Failed to get reposters for ${postUri}: No repostedBy data in response.`);
-      throw new Error('Failed to get reposters: No repostedBy data returned.');
+      console.error(`[ATProto Posts API] Failed to get reposters for ${postUri}: No repostedBy data in response.`)
+      throw new Error('Failed to get reposters: No repostedBy data returned.')
     }
   } catch (error) {
-    console.error(`[ATProto Posts API] Error getting reposters for ${postUri}:`, error.name, error.message, error);
-    let message = `Failed to get reposters: ${error.message || 'Unknown error'}.`;
-     if (error.name === 'XRPCError') {
-       if (error.status === 404) message = 'Post not found.';
-       else if (error.status === 401) message = 'Authentication required.';
-       else message = `Get reposters error: ${error.message || 'Server error'}. (Status: ${error.status})`;
+    console.error(`[ATProto Posts API] Error getting reposters for ${postUri}:`, error.name, error.message, error)
+    let message = `Failed to get reposters: ${error.message || 'Unknown error'}.`
+    if (error.name === 'XRPCError') {
+      if (error.status === 404) message = 'Post not found.'
+      else if (error.status === 401) message = 'Authentication required.'
+      else message = `Get reposters error: ${error.message || 'Server error'}. (Status: ${error.status})`
     }
-    throw new Error(message);
+    throw new Error(message)
   }
 }
 
@@ -430,39 +450,39 @@ export async function getPostReposters(postUri, limit = 50, cursor) {
  *                                 The structure will be nested PostView objects.
  * @throws {Error} If fetching fails.
  */
-export async function getNetworkPostThread(postUri, depth, parentHeight) {
-  if (!agent.hasSession) throw new Error('No active session. Please login first.'); // Or allow for anon if AppView supports
-  if (!postUri) throw new Error('Post URI is required to fetch a thread.');
+export async function getNetworkPostThread (postUri, depth, parentHeight) {
+  if (!agent.hasSession) throw new Error('No active session. Please login first.') // Or allow for anon if AppView supports
+  if (!postUri) throw new Error('Post URI is required to fetch a thread.')
 
-  console.log(`[ATProto Posts API] Fetching network thread for post: ${postUri}, depth: ${depth}, parentHeight: ${parentHeight}`);
+  console.log(`[ATProto Posts API] Fetching network thread for post: ${postUri}, depth: ${depth}, parentHeight: ${parentHeight}`)
   try {
-    const response = await agent.getPostThread({ uri: postUri, depth, parentHeight });
+    const response = await agent.getPostThread({ uri: postUri, depth, parentHeight })
     if (response.success && response.data.thread) {
-      console.log(`[ATProto Posts API] Successfully fetched thread for ${postUri}.`);
+      console.log(`[ATProto Posts API] Successfully fetched thread for ${postUri}.`)
       // The response.data.thread is a PostView. It needs to be transformed.
       // This transformation needs to be recursive for parents and replies.
       // For now, we return the raw thread data from API, transformation will be complex.
       // TODO: Implement recursive transformation of the thread PostView structure.
       // For now, actions/UI will receive the direct agent.getPostThread response structure.
-      return response.data.thread;
+      return response.data.thread
     } else {
-      console.error(`[ATProto Posts API] Failed to fetch thread for ${postUri}, success false or no thread data.`);
-      throw new Error('Failed to fetch thread: No thread data returned.');
+      console.error(`[ATProto Posts API] Failed to fetch thread for ${postUri}, success false or no thread data.`)
+      throw new Error('Failed to fetch thread: No thread data returned.')
     }
   } catch (error) {
-    console.error(`[ATProto Posts API] Error fetching network thread for ${postUri}:`, error.name, error.message, error);
-    let message = `Failed to fetch thread: ${error.message || 'Unknown error'}.`;
+    console.error(`[ATProto Posts API] Error fetching network thread for ${postUri}:`, error.name, error.message, error)
+    let message = `Failed to fetch thread: ${error.message || 'Unknown error'}.`
     if (error.name === 'XRPCError') {
       if (error.status === 404 || (error.message && error.message.toLowerCase().includes('post not found'))) {
-        message = 'Post not found.';
+        message = 'Post not found.'
       } else if (error.status === 401 || error.error === 'AuthenticationRequired') {
-        message = 'Authentication required to view this thread.';
+        message = 'Authentication required to view this thread.'
       } else if (error.status >= 500) {
-        message = 'The server encountered an error fetching the thread. Please try again later.';
+        message = 'The server encountered an error fetching the thread. Please try again later.'
       } else {
-        message = `Fetch thread error: ${error.message || 'Unknown server error'}. (Status: ${error.status})`;
+        message = `Fetch thread error: ${error.message || 'Unknown server error'}. (Status: ${error.status})`
       }
     }
-    throw new Error(message);
+    throw new Error(message)
   }
 }
