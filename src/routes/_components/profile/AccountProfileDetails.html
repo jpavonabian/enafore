@@ -13,7 +13,7 @@
      aria-label={followingLabel}
      rel="prefetch"
   >
-    {#if $disableFollowingCounts}
+    {#if !$disableFollowingCounts}
     <span class="account-profile-details-item-datum">
       {numFollowingDisplay}
     </span>
@@ -27,7 +27,7 @@
      aria-label={followersLabel}
      rel="prefetch"
   >
-    {#if $disableFollowerCounts}
+    {#if !$disableFollowerCounts}
     <span class="account-profile-details-item-datum">
       {numFollowersDisplay}
     </span>
