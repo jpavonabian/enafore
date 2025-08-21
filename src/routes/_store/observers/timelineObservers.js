@@ -59,7 +59,7 @@ export function timelineObservers () {
     const firstStatusId = store.getFirstTimelineItemId(currentInstance, currentTimeline)
     const { currentInstanceInfo } = store.get()
     let streamingApi
-    if (currentInstanceInfo.configuration.urls.streaming) {
+    if (currentInstanceInfo?.configuration?.urls?.streaming) {
       streamingApi = currentInstanceInfo.configuration.urls.streaming
     } else {
       streamingApi = currentInstanceInfo.urls.streaming_api

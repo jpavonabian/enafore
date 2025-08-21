@@ -63,7 +63,7 @@ async function refreshInstanceData (instanceName) {
 function stream (store, instanceName, currentInstanceInfo) {
   const { accessToken } = store.get()
   let streamingApi
-  if (currentInstanceInfo.configuration.urls.streaming) {
+  if (currentInstanceInfo?.configuration?.urls?.streaming) {
     streamingApi = currentInstanceInfo.configuration.urls.streaming
   } else {
     streamingApi = currentInstanceInfo.urls.streaming_api
